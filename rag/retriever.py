@@ -1,20 +1,18 @@
 from typing import List, Optional
 import os
 from langchain_chroma import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_ollama import OllamaEmbeddings
 
 
-EMBEDDING_MODEL = "BAAI/bge-m3"
+EMBEDDING_MODEL = "bge-m3:latest"
 CHROMA_DB_PATH = "./chroma_db"
 COLLECTION_NAME = "documents"
 
 
 class Retriever:
     def __init__(self):
-        self.embeddings = HuggingFaceEmbeddings(
+        self.embeddings = OllamaEmbeddings(
             model=EMBEDDING_MODEL,
-            model_kwargs={"device": "cpu"},
-            encode_kwargs={"normalize_embeddings": True},
         )
         self.db = Chroma(
             persist_directory=CHROMA_DB_PATH,

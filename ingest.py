@@ -1,13 +1,12 @@
 import os
 from typing import List
-#from langchain_text_splitter import RecursiveCharacterTextSplitter
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from langchain_chroma import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_ollama import OllamaEmbeddings
 
 
-EMBEDDING_MODEL = "BAAI/bge-m3"
+EMBEDDING_MODEL = "bge-m3:latest"
 CHROMA_DB_PATH = "./chroma_db"
 COLLECTION_NAME = "documents"
 DOCS_PATH = "./docs"
@@ -41,12 +40,10 @@ def ingest_documents():
     chunks = splitter.split_text("\n\n".join(docs))
 
     print(f"Creating {len(chunks)} chunks...")
-    
+
     print(f"Loading embedding model: {EMBEDDING_MODEL}...")
-    embeddings = HuggingFaceEmbeddings(
+    embeddings = OllamaEmbeddings(
         model=EMBEDDING_MODEL,
-        model_kwargs={"device": "cpu"},
-        encode_kwargs={"normalize_embeddings": True},
     )
 
     print(f"Creating/Updating ChromaDB at {CHROMA_DB_PATH}...")
