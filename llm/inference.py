@@ -1,7 +1,8 @@
+from typing import List
 from langchain_ollama import OllamaLLM
 
 
-LLM_MODEL = "qwen2.5:3b"
+LLM_MODEL = "smollm2:135m"
 
 
 class InferenceEngine:
