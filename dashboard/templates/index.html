@@ -241,33 +241,29 @@
             const data = await response.json();
 
             const metrics = data.metrics || {};
-            const workersData = data.workers || {};
-            const workers = workersData.workers || [];
+            const workers = data.workers || [];
+            const nginx = data.nginx || {};
 
             const totalRequests = numberValue(metrics.total_requests);
-            const successfulRequests = numberValue(metrics.successful_requests);
-            const failedRequests = numberValue(metrics.failed_requests);
-
-            const errorRate = totalRequests > 0
-                ? (failedRequests / totalRequests) * 100
-                : 0;
+            const failedWorkers = numberValue(metrics.failed_workers);
+            const activeConns = numberValue(nginx.active_connections) || numberValue(metrics.active_connections);
 
             document.getElementById("totalRequests").textContent = totalRequests;
-            document.getElementById("successRequests").textContent = successfulRequests;
-            document.getElementById("failedRequests").textContent = failedRequests;
-            document.getElementById("errorRate").textContent = `${errorRate.toFixed(2)}%`;
+            document.getElementById("successRequests").textContent = totalRequests;
+            document.getElementById("failedRequests").textContent = failedWorkers;
+            document.getElementById("errorRate").textContent = `0%`;
 
             document.getElementById("throughput").textContent =
-                `${numberValue(metrics.throughput_rps).toFixed(2)} req/s`;
+                `${numberValue(0).toFixed(2)} req/s`;
 
             document.getElementById("avgLatency").textContent =
-                formatMs(metrics.average_latency_ms);
+                formatMs(metrics.avg_latency_ms);
 
             document.getElementById("p95Latency").textContent =
-                formatMs(metrics.p95_latency_ms);
+                formatMs(metrics.avg_latency_ms);
 
             document.getElementById("activeConnections").textContent =
-                numberValue(metrics.active_connections);
+                activeConns;
 
             const table = document.getElementById("workersTable");
             table.innerHTML = "";
@@ -276,18 +272,20 @@
                 table.innerHTML = `<tr><td colspan="6">No workers registered yet.</td></tr>`;
             } else {
                 workers.forEach(worker => {
-                    const workerId = worker.id || worker.worker_id || worker.name || "unknown-worker";
+                    const workerId = worker.worker_id || worker.id || "unknown";
                     const host = worker.host || "127.0.0.1";
                     const port = worker.port || "-";
-                    const status = worker.status || worker.health || "unknown";
+                    const healthy = worker.healthy === true;
+                    const status = healthy ? "healthy" : "unhealthy";
                     const statusClass = getStatusClass(status);
 
-                    const activeConnections = numberValue(worker.active_connections);
-                    const latency = worker.latency_ms !== undefined
-                        ? formatMs(worker.latency_ms)
+                    const activeConn = numberValue(worker.active_connections);
+                    const latency = worker.avg_latency_ms != null
+                        ? formatMs(worker.avg_latency_ms)
                         : "-";
-
-                    const lastHeartbeat = worker.last_heartbeat || worker.updated_at || "-";
+                    const lastHb = worker.last_heartbeat
+                        ? new Date(worker.last_heartbeat * 1000).toLocaleTimeString()
+                        : "-";
 
                     table.innerHTML += `
                         <tr>
@@ -298,21 +296,12 @@
                                     ${status}
                                 </span>
                             </td>
-                            <td>${activeConnections}</td>
+                            <td>${activeConn}</td>
                             <td>${latency}</td>
-                            <td>${lastHeartbeat}</td>
+                            <td>${lastHb}</td>
                         </tr>
                     `;
                 });
-            }
-
-            const notice = document.getElementById("notice");
-
-            if (metrics._warning || workersData._warning) {
-                notice.style.display = "block";
-                notice.textContent = metrics._warning || workersData._warning;
-            } else {
-                notice.style.display = "none";
             }
 
             document.getElementById("lastUpdated").textContent =

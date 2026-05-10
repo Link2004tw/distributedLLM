@@ -151,22 +151,23 @@ async def get_data():
     metrics_raw = await fetch_from_master("/metrics", fallback_metrics)
     workers_raw = await fetch_from_master("/workers", fallback_workers)
     workers_list = workers_raw.get("workers", [])
+    nginx_status = await get_nginx_status()
 
     master_online = "_error" not in metrics_raw and "_error" not in workers_raw
 
     metrics = dict(metrics_raw)
-    metrics.setdefault("avg_latency_ms", metrics.get("average_latency_ms", 0))
+    metrics.setdefault("avg_latency_ms", 0)
     metrics.setdefault("failed_workers", 0)
 
     workers = []
     for w in workers_list:
         workers.append({
-            "worker_id": w.get("worker_id") or w.get("id", "unknown"),
-            "healthy": w.get("healthy", w.get("status") == "healthy"),
+            "worker_id": w.get("worker_id", "unknown"),
+            "healthy": w.get("healthy", False),
             "host": w.get("host", "127.0.0.1"),
             "port": w.get("port", 0),
             "active_connections": w.get("active_connections", 0),
-            "avg_latency_ms": w.get("avg_latency_ms") or w.get("latency_ms", 0),
+            "avg_latency_ms": w.get("avg_latency_ms", 0),
             "last_heartbeat": w.get("last_heartbeat", None)
         })
 
@@ -174,6 +175,7 @@ async def get_data():
         "master_online": master_online,
         "metrics": metrics,
         "workers": workers,
+        "nginx": nginx_status,
         "timestamp": time.time()
     }
 
