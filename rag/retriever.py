@@ -4,7 +4,7 @@ from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
 
 
-EMBEDDING_MODEL = "bge-m3:latest"
+EMBEDDING_MODEL = "nomic-embed-text"
 CHROMA_DB_PATH = "./chroma_db"
 COLLECTION_NAME = "documents"
 
