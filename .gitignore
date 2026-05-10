@@ -17,3 +17,6 @@ Thumbs.db
 
 # Project plan (internal, not part of deliverables)
 plan.md
+
+# Local testing helpers
+mock_lb.py
