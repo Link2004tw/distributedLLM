@@ -10,7 +10,8 @@ def main():
         ("Worker 2", "workers.worker", "8002"),
         ("Worker 3", "workers.worker", "8003"),
         ("Worker 4", "workers.worker", "8004"),
-        ("Load Balancer", "lb.load_balancer", "8000"),
+        ("Load Balancer (NGINX)", "lb.load_balancer", "8000"),
+        ("LB Controller", "lb.app", "8005"),
         ("Dashboard", "dashboard.main", "5000"),
     ]
 
@@ -29,26 +30,31 @@ def main():
         elif sys.argv[1] == "lb":
             print("Starting Load Balancer on port 8000")
             subprocess.run(["uvicorn", "lb.load_balancer:app", "--port", "8000"])
+        elif sys.argv[1] == "controller":
+            print("Starting LB Controller on port 8005")
+            subprocess.run(["uvicorn", "lb.app:app", "--port", "8005"])
         elif sys.argv[1] == "dashboard":
             print("Starting Admin Dashboard on port 5000")
             subprocess.run(["uvicorn", "dashboard.main:app", "--port", "5000"])
         else:
-            print("Usage: python main.py [worker <num>|master|lb|dashboard]")
+            print("Usage: python main.py [worker <num>|master|lb|controller|dashboard]")
     else:
         print("Distributed LLM Inference System")
         print("\nTo start individual components:")
-        print("  python main.py master      - Start Master Node (port 9000)")
-        print("  python main.py worker <n>  - Start Worker n (ports 8001+)")
-        print("  python main.py lb          - Start Load Balancer (port 8000)")
-        print("  python main.py dashboard   - Start Admin Dashboard (port 5000)")
-        print("\nOr start each component manually in separate terminals:")
+        print("  python main.py master       - Start Master Node (port 9000)")
+        print("  python main.py worker <n>   - Start Worker n (ports 8001+)")
+        print("  python main.py lb           - Start NGINX (port 8000)")
+        print("  python main.py controller   - Start LB Controller (port 8005)")
+        print("  python main.py dashboard    - Start Admin Dashboard (port 5000)")
+        print("\nOr start each component manually:")
         print("  uvicorn master.monitor:app --port 9000")
         print("  uvicorn workers.worker:app --port 8001")
         print("  uvicorn workers.worker:app --port 8002")
         print("  uvicorn workers.worker:app --port 8003")
         print("  uvicorn workers.worker:app --port 8004")
-        print("  uvicorn lb.load_balancer:app --port 8000")
-        print("  uvicorn dashboard.main:app --port 5000")
+        print("  .\\lb\\nginx\\nginx.exe -p lb\\nginx")
+        print("  uvicorn lb.app:app --port 8005")
+        print("  uvicorn dashboard.app:app --port 5000")
 
 
 if __name__ == "__main__":
