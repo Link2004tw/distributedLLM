@@ -1,1 +1,16 @@
+# Virtual environment
+.venv/
 
+# Generated vector database
+chroma_db/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Environment
+.env
+
+# OS files
+Thumbs.db
+.DS_Store
