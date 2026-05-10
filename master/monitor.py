@@ -33,7 +33,7 @@ async def register_worker(worker_id: str, port: int, host: str = "localhost"):
         healthy=True,
         active_connections=0,
         avg_latency_ms=0.0,
-        time.time(),
+        last_heartbeat=time.time(),
     )
 
 

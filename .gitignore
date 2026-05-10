@@ -14,9 +14,23 @@ __pycache__/
 # OS files
 Thumbs.db
 .DS_Store
+CSE 354 Project S26.md
 
 # Project plan (internal, not part of deliverables)
 plan.md
 
 # Local testing helpers
 mock_lb.py
+# Internal test scripts and guides
+lb/TESTING.md
+lb/test_lb.py
+
+# NGINX downloaded binary, logs, and temp files
+lb/nginx/
+
+# Log files
+*.log
+
+# IDE settings
+.vscode/
+.idea/
