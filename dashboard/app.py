@@ -9,6 +9,7 @@ from fastapi.templating import Jinja2Templates
 
 
 MASTER_URL = os.getenv("MASTER_URL", "http://127.0.0.1:9000")
+NGINX_URL = os.getenv("NGINX_URL", "http://127.0.0.1:8000")
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
@@ -119,7 +120,30 @@ async def get_workers():
 async def get_overview():
     metrics = await fetch_from_master("/metrics", fallback_metrics)
     workers_data = await fetch_from_master("/workers", fallback_workers)
-    return {"metrics": metrics, "workers": workers_data.get("workers", [])}
+    nginx_status = await get_nginx_status()
+    return {
+        "metrics": metrics,
+        "workers": workers_data.get("workers", []),
+        "nginx": nginx_status
+    }
+
+
+async def get_nginx_status() -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(f"{NGINX_URL}/nginx_status")
+            text = resp.text
+            active = 0
+            total = 0
+            for line in text.strip().split("\n"):
+                if "Active connections:" in line:
+                    active = int(line.split(":")[1].strip())
+                parts = line.strip().split()
+                if len(parts) == 3 and parts[0].isdigit():
+                    total = int(parts[1])
+            return {"active_connections": active, "total_requests": total}
+    except Exception:
+        return {"active_connections": 0, "total_requests": 0, "_error": "NGINX unreachable"}
 
 
 @app.get("/api/data")
