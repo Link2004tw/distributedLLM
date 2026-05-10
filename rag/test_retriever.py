@@ -1,3 +1,12 @@
+# import sys
+# from pathlib import Path
+
+# root_dir = Path(__file__).resolve().parent.parent
+
+# # 2. Add that root directory to sys.path so Python can "see" the llm folder
+# if str(root_dir) not in sys.path:
+#     sys.path.append(str(root_dir))
+
 from rag.retriever import retriever
 from llm.inference import InferenceEngine
 

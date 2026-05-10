@@ -6,7 +6,7 @@ from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
 
 
-EMBEDDING_MODEL = "nomic-embed-text"
+EMBEDDING_MODEL = "nomic-embed-text:latest"
 CHROMA_DB_PATH = "./chroma_db"
 COLLECTION_NAME = "documents"
 DOCS_PATH = "./docs"
