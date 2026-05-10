@@ -19,8 +19,18 @@ CSE 354 Project S26.md
 # Project plan (internal, not part of deliverables)
 plan.md
 
+<<<<<<< HEAD
 # Local testing helpers
 mock_lb.py
+=======
+# Binary assets / images
+*.jpg
+*.png
+*.jpeg
+
+# Ignored files
+mock_master.py
+>>>>>>> 4008c3dd8fc91140c70b7368fa8e64a243ccd96d
 # Internal test scripts and guides
 lb/TESTING.md
 lb/test_lb.py
