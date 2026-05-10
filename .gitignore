@@ -18,3 +18,11 @@ CSE 354 Project S26.md
 
 # Project plan (internal, not part of deliverables)
 plan.md
+
+# Binary assets / images
+*.jpg
+*.png
+*.jpeg
+
+# Ignored files
+mock_master.py

@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Distributed LLM Admin Dashboard</title>
+
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #0f172a;
+            color: #e5e7eb;
+        }
+
+        .container {
+            padding: 24px;
+        }
+
+        .header {
+            margin-bottom: 24px;
+        }
+
+        .header h1 {
+            margin: 0;
+            font-size: 32px;
+        }
+
+        .header p {
+            color: #94a3b8;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .card {
+            background: #1e293b;
+            border-radius: 14px;
+            padding: 20px;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.25);
+        }
+
+        .card-title {
+            color: #94a3b8;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+
+        .card-value {
+            font-size: 28px;
+            font-weight: bold;
+        }
+
+        .success {
+            color: #22c55e;
+        }
+
+        .danger {
+            color: #ef4444;
+        }
+
+        .warning {
+            color: #f59e0b;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: #1e293b;
+            border-radius: 14px;
+            overflow: hidden;
+        }
+
+        th, td {
+            padding: 14px;
+            border-bottom: 1px solid #334155;
+            text-align: left;
+        }
+
+        th {
+            background: #111827;
+            color: #cbd5e1;
+        }
+
+        .status-pill {
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 13px;
+            font-weight: bold;
+        }
+
+        .healthy {
+            background: rgba(34, 197, 94, 0.15);
+            color: #22c55e;
+        }
+
+        .unhealthy {
+            background: rgba(239, 68, 68, 0.15);
+            color: #ef4444;
+        }
+
+        .unknown {
+            background: rgba(245, 158, 11, 0.15);
+            color: #f59e0b;
+        }
+
+        .footer {
+            margin-top: 18px;
+            color: #94a3b8;
+            font-size: 13px;
+        }
+
+        .notice {
+            background: #422006;
+            color: #fde68a;
+            padding: 12px;
+            border-radius: 12px;
+            margin-bottom: 16px;
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+<div class="container">
+    <div class="header">
+        <h1>Distributed LLM Admin Dashboard</h1>
+        <p>Monitoring Master Node, Load Balancer, and GPU Workers</p>
+        <p>Master URL: {{ master_url }}</p>
+    </div>
+
+    <div id="notice" class="notice"></div>
+
+    <div class="grid">
+        <div class="card">
+            <div class="card-title">Total Requests</div>
+            <div id="totalRequests" class="card-value">0</div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Throughput</div>
+            <div id="throughput" class="card-value">0 req/s</div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Average Latency</div>
+            <div id="avgLatency" class="card-value">0 ms</div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Error Rate</div>
+            <div id="errorRate" class="card-value">0%</div>
+        </div>
+    </div>
+
+    <div class="grid">
+        <div class="card">
+            <div class="card-title">Successful Requests</div>
+            <div id="successRequests" class="card-value success">0</div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Failed Requests</div>
+            <div id="failedRequests" class="card-value danger">0</div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">P95 Latency</div>
+            <div id="p95Latency" class="card-value">0 ms</div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Active Connections</div>
+            <div id="activeConnections" class="card-value warning">0</div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Worker Status</h2>
+
+        <table>
+            <thead>
+            <tr>
+                <th>Worker ID</th>
+                <th>Address</th>
+                <th>Status</th>
+                <th>Active Connections</th>
+                <th>Latency</th>
+                <th>Last Heartbeat</th>
+            </tr>
+            </thead>
+
+            <tbody id="workersTable">
+            <tr>
+                <td colspan="6">Loading workers...</td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="footer">
+        Auto-refreshes every 2 seconds.
+        Last updated: <span id="lastUpdated">Never</span>
+    </div>
+</div>
+
+<script>
+    function numberValue(value) {
+        if (value === null || value === undefined) {
+            return 0;
+        }
+
+        const converted = Number(value);
+        return isNaN(converted) ? 0 : converted;
+    }
+
+    function formatMs(value) {
+        return `${numberValue(value).toFixed(2)} ms`;
+    }
+
+    function getStatusClass(status) {
+        const normalized = String(status || "unknown").toLowerCase();
+
+        if (normalized === "healthy" || normalized === "ok" || normalized === "active") {
+            return "healthy";
+        }
+
+        if (normalized === "unhealthy" || normalized === "down" || normalized === "failed") {
+            return "unhealthy";
+        }
+
+        return "unknown";
+    }
+
+    async function refreshDashboard() {
+        try {
+            const response = await fetch("/api/overview");
+            const data = await response.json();
+
+            const metrics = data.metrics || {};
+            const workersData = data.workers || {};
+            const workers = workersData.workers || [];
+
+            const totalRequests = numberValue(metrics.total_requests);
+            const successfulRequests = numberValue(metrics.successful_requests);
+            const failedRequests = numberValue(metrics.failed_requests);
+
+            const errorRate = totalRequests > 0
+                ? (failedRequests / totalRequests) * 100
+                : 0;
+
+            document.getElementById("totalRequests").textContent = totalRequests;
+            document.getElementById("successRequests").textContent = successfulRequests;
+            document.getElementById("failedRequests").textContent = failedRequests;
+            document.getElementById("errorRate").textContent = `${errorRate.toFixed(2)}%`;
+
+            document.getElementById("throughput").textContent =
+                `${numberValue(metrics.throughput_rps).toFixed(2)} req/s`;
+
+            document.getElementById("avgLatency").textContent =
+                formatMs(metrics.average_latency_ms);
+
+            document.getElementById("p95Latency").textContent =
+                formatMs(metrics.p95_latency_ms);
+
+            document.getElementById("activeConnections").textContent =
+                numberValue(metrics.active_connections);
+
+            const table = document.getElementById("workersTable");
+            table.innerHTML = "";
+
+            if (workers.length === 0) {
+                table.innerHTML = `<tr><td colspan="6">No workers registered yet.</td></tr>`;
+            } else {
+                workers.forEach(worker => {
+                    const workerId = worker.id || worker.worker_id || worker.name || "unknown-worker";
+                    const host = worker.host || "127.0.0.1";
+                    const port = worker.port || "-";
+                    const status = worker.status || worker.health || "unknown";
+                    const statusClass = getStatusClass(status);
+
+                    const activeConnections = numberValue(worker.active_connections);
+                    const latency = worker.latency_ms !== undefined
+                        ? formatMs(worker.latency_ms)
+                        : "-";
+
+                    const lastHeartbeat = worker.last_heartbeat || worker.updated_at || "-";
+
+                    table.innerHTML += `
+                        <tr>
+                            <td>${workerId}</td>
+                            <td>${host}:${port}</td>
+                            <td>
+                                <span class="status-pill ${statusClass}">
+                                    ${status}
+                                </span>
+                            </td>
+                            <td>${activeConnections}</td>
+                            <td>${latency}</td>
+                            <td>${lastHeartbeat}</td>
+                        </tr>
+                    `;
+                });
+            }
+
+            const notice = document.getElementById("notice");
+
+            if (metrics._warning || workersData._warning) {
+                notice.style.display = "block";
+                notice.textContent = metrics._warning || workersData._warning;
+            } else {
+                notice.style.display = "none";
+            }
+
+            document.getElementById("lastUpdated").textContent =
+                new Date().toLocaleTimeString();
+
+        } catch (error) {
+            const notice = document.getElementById("notice");
+            notice.style.display = "block";
+            notice.textContent = `Dashboard refresh failed: ${error}`;
+        }
+    }
+
+    refreshDashboard();
+    setInterval(refreshDashboard, 2000);
+</script>
+</body>
+</html>
