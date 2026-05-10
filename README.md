@@ -80,11 +80,13 @@ project/
 - **Ollama** installed and running
 
 **Install Ollama (Windows PowerShell):**
+
 ```powershell
 irm https://ollama.com/install.ps1 | iex
 ```
 
 **Install Ollama (macOS/Linux):**
+
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
 ```
@@ -98,16 +100,19 @@ python -m venv .venv
 Activate the environment:
 
 **Windows (PowerShell):**
+
 ```powershell
 .venv\Scripts\Activate
 ```
 
 **Windows (CMD):**
+
 ```cmd
 .venv\Scripts\activate.bat
 ```
 
 **Linux/Mac:**
+
 ```bash
 source .venv/bin/activate
 ```
@@ -242,7 +247,7 @@ The system implements three mechanisms for resilience:
 ```bash
 # Pull the required Ollama models
 ollama pull nomic-embed-text
-ollama pull smollm2
+ollama pull smollm2:135m
 ```
 
 ### ChromaDB not found / empty results
