@@ -79,32 +79,53 @@ project/
 - **Python 3.10+**
 - **Ollama** installed and running
 
-### 1. Install Ollama & Pull Models
-
-```bash
-ollama pull smollm2:135m          # default model (lightweight, fast)
-ollama pull nomic-embed-text # optional embedding model
+**Install Ollama (Windows PowerShell):**
+```powershell
+irm https://ollama.com/install.ps1 | iex
 ```
 
-### 2. Install Python Dependencies
+**Install Ollama (macOS/Linux):**
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+```
 
-**Option A: Install all dependencies at once (recommended)**
+### 1. Create Virtual Environment (Recommended)
+
+```bash
+python -m venv .venv
+```
+
+Activate the environment:
+
+**Windows (PowerShell):**
+```powershell
+.venv\Scripts\Activate
+```
+
+**Windows (CMD):**
+```cmd
+.venv\Scripts\activate.bat
+```
+
+**Linux/Mac:**
+```bash
+source .venv/bin/activate
+```
+
+### 2. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-**Option B: Install individually**
+### 3. Pull Ollama Models
 
 ```bash
-pip install fastapi uvicorn
-pip install langchain langchain-ollama langchain-chroma langchain-huggingface
-pip install chromadb
-pip install sentence-transformers
-pip install langchain-text-splitters
+ollama pull nomic-embed-text
+ollama pull smollm2
 ```
 
-### 3. Ingest Documents (Run Once)
+### 4. Ingest Documents
 
 ```bash
 python ingest.py
@@ -112,7 +133,7 @@ python ingest.py
 
 This reads source documents, splits them into chunks, embeds with nomic-embed-text, and stores vectors in ChromaDB on disk.
 
-### 4. Start System Components
+### 5. Start System Components
 
 Each component must run in its own terminal:
 
@@ -130,7 +151,7 @@ uvicorn workers.worker:app --port 8004
 uvicorn lb.load_balancer:app --port 8000
 ```
 
-### 5. Run Load Test
+### 6. Run Load Test
 
 ```bash
 python client/load_generator.py
