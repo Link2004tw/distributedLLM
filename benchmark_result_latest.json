@@ -1,40 +1,35 @@
 {
-  "total": 10,
-  "success": 6,
-  "failed": 4,
-  "error_rate": 40.0,
-  "total_time_s": 9.16,
-  "throughput_rps": 1.09,
-  "avg_latency_s": 3.2253,
-  "min_latency_s": 0.369,
-  "max_latency_s": 6.4283,
-  "p50_s": 2.4066,
-  "p95_s": 4.954,
-  "p99_s": 4.954,
-  "sample_errors": [
-    "[WinError 10054] An existing connection was forcibly closed by the remote host",
-    "[WinError 10054] An existing connection was forcibly closed by the remote host",
-    "[WinError 10054] An existing connection was forcibly closed by the remote host",
-    "[WinError 10054] An existing connection was forcibly closed by the remote host"
-  ],
+  "total": 1000,
+  "success": 1000,
+  "failed": 0,
+  "error_rate": 0.0,
+  "total_time_s": 611.16,
+  "throughput_rps": 1.64,
+  "avg_latency_s": 2.4412,
+  "min_latency_s": 0.1065,
+  "max_latency_s": 40.7688,
+  "p50_s": 1.8044,
+  "p95_s": 6.0647,
+  "p99_s": 9.8332,
+  "sample_errors": [],
   "rag_accuracy": {
     "total_queries": 5,
-    "successful": 2,
-    "has_sources": 2,
-    "keyword_matches": 2,
-    "rag_accuracy_percent": 40.0,
-    "sources_coverage_percent": 40.0,
-    "avg_retrieval_time_ms": 2805.83,
+    "successful": 5,
+    "has_sources": 5,
+    "keyword_matches": 3,
+    "rag_accuracy_percent": 60.0,
+    "sources_coverage_percent": 100.0,
+    "avg_retrieval_time_ms": 1099.57,
     "details": [
       {
         "query": "What is a dog?",
         "description": "Dog-related query",
         "success": true,
         "has_sources": true,
-        "keyword_match": true,
-        "match_score": 0.4,
+        "keyword_match": false,
+        "match_score": 0.2,
         "sources_count": 3,
-        "retrieval_time_ms": 2498.64
+        "retrieval_time_ms": 1322.83
       },
       {
         "query": "Tell me about cats",
@@ -44,40 +39,43 @@
         "keyword_match": true,
         "match_score": 0.4,
         "sources_count": 3,
-        "retrieval_time_ms": 3113.03
+        "retrieval_time_ms": 607.4
       },
       {
         "query": "What do you know about hamsters?",
         "description": "Hamster-related query",
-        "success": false,
-        "has_sources": false,
-        "keyword_match": false,
-        "match_score": 0,
-        "error": "[WinError 10054] An existing connection was forcibly closed by the remote host"
+        "success": true,
+        "has_sources": true,
+        "keyword_match": true,
+        "match_score": 1.0,
+        "sources_count": 3,
+        "retrieval_time_ms": 2230.6
       },
       {
         "query": "Explain artificial intelligence",
         "description": "AI definition query",
-        "success": false,
-        "has_sources": false,
+        "success": true,
+        "has_sources": true,
         "keyword_match": false,
-        "match_score": 0,
-        "error": "[WinError 10061] No connection could be made because the target machine actively refused it"
+        "match_score": 0.25,
+        "sources_count": 3,
+        "retrieval_time_ms": 561.74
       },
       {
         "query": "What is machine learning?",
         "description": "ML definition query",
-        "success": false,
-        "has_sources": false,
-        "keyword_match": false,
-        "match_score": 0,
-        "error": "[WinError 10061] No connection could be made because the target machine actively refused it"
+        "success": true,
+        "has_sources": true,
+        "keyword_match": true,
+        "match_score": 0.6,
+        "sources_count": 3,
+        "retrieval_time_ms": 775.27
       }
     ]
   },
   "label": "single-test",
   "config": {
-    "workers": 2,
+    "workers": 4,
     "model": "smollm2:135m",
     "concurrency": 4,
     "strategy": "round_robin",
