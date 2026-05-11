@@ -1,0 +1,18 @@
+### Quickstart - Start All Services
+### Run these commands in separate terminals
+
+# Terminal 1: Start Ollama (if not running)
+ollama serve
+
+# Terminal 2: Start Master Node
+python -m uvicorn master.monitor:app --port 9000 --host 127.0.0.1
+
+# Terminal 3: Start GPU Workers
+python -m uvicorn workers.gpu_worker:app --port 8001 --host 127.0.0.1
+python -m uvicorn workers.gpu_worker:app --port 8002 --host 127.0.0.1
+
+# Terminal 4: Start Load Balancer
+python -m uvicorn lb.load_balancer:app --port 8000 --host 0.0.0.0
+
+# Terminal 5: Start Dashboard (optional)
+python -m uvicorn dashboard.app:app --port 8080 --host 127.0.0.1

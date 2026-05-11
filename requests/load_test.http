@@ -1,0 +1,92 @@
+### Load Test - Sequential Queries
+@baseUrl = http://127.0.0.1:8000
+
+### Query 1
+POST {{baseUrl}}/query
+Content-Type: application/json
+
+{
+  "query": "What is machine learning?",
+  "top_k": 3
+}
+
+### Query 2
+POST {{baseUrl}}/query
+Content-Type: application/json
+
+{
+  "query": "Explain neural networks",
+  "top_k": 3
+}
+
+### Query 3
+POST {{baseUrl}}/query
+Content-Type: application/json
+
+{
+  "query": "What is deep learning?",
+  "top_k": 3
+}
+
+### Query 4
+POST {{baseUrl}}/query
+Content-Type: application/json
+
+{
+  "query": "Explain artificial intelligence",
+  "top_k": 3
+}
+
+### Query 5
+POST {{baseUrl}}/query
+Content-Type: application/json
+
+{
+  "query": "What is a transformer model?",
+  "top_k": 3
+}
+
+### Query 6
+POST {{baseUrl}}/query
+Content-Type: application/json
+
+{
+  "query": "Explain RAG systems",
+  "top_k": 3
+}
+
+### Query 7
+POST {{baseUrl}}/query
+Content-Type: application/json
+
+{
+  "query": "What is distributed computing?",
+  "top_k": 3
+}
+
+### Query 8
+POST {{baseUrl}}/query
+Content-Type: application/json
+
+{
+  "query": "Explain load balancing",
+  "top_k": 3
+}
+
+### Query 9
+POST {{baseUrl}}/query
+Content-Type: application/json
+
+{
+  "query": "What is GPU acceleration?",
+  "top_k": 3
+}
+
+### Query 10
+POST {{baseUrl}}/query
+Content-Type: application/json
+
+{
+  "query": "Explain concurrent processing",
+  "top_k": 3
+}

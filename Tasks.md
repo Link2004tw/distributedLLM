@@ -36,8 +36,8 @@
 | 16 | Add concurrent Ollama client with connection pooling | Medium | [x] |
 | 17 | Add batch embedding queue (flush every 100ms) | High | [x] |
 | 18 | Add batch inference queue (flush every 100ms) | High | [x] |
-| 19 | Refactor LB to FastAPI (replace NGINX, async routing) | High | [ ] |
-| 20 | Add GPU-aware routing to LB | High | [ ] |
+| 19 | Refactor LB to FastAPI (replace NGINX, async routing) | High | [x] |
+| 20 | Add GPU-aware routing to LB | High | [x] |
 | 21 | Add response streaming support | Medium | [ ] |
 
 ### Phase 3: GPU Worker Files Created
@@ -47,6 +47,12 @@
 | `workers/gpu_worker.py` | Main GPU-accelerated worker with FastAPI |
 | `workers/gpu_utils.py` | GPU detection and monitoring utilities |
 | `llm/gpu_inference.py` | Ollama client, batch processor, LRU cache |
+
+### Phase 4: FastAPI Load Balancer (Completed)
+
+| File | Description |
+|------|-------------|
+| `lb/load_balancer.py` | Async FastAPI LB with 4 routing strategies |
 
 ---
 

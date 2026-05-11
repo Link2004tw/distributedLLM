@@ -1,0 +1,55 @@
+### GPU Worker - All Endpoints
+@baseUrl = http://127.0.0.1:8001
+
+### Health Check
+GET {{baseUrl}}/health
+
+### GPU Stats
+GET {{baseUrl}}/gpu-stats
+
+### Worker ID
+GET {{baseUrl}}/worker-id
+
+### Capabilities
+GET {{baseUrl}}/capabilities
+
+### Single Query
+POST {{baseUrl}}/query
+Content-Type: application/json
+
+{
+  "query": "What is artificial intelligence?",
+  "user_id": "user-123",
+  "top_k": 3
+}
+
+### Query with different top_k
+POST {{baseUrl}}/query
+Content-Type: application/json
+
+{
+  "query": "Explain neural networks",
+  "user_id": "user-456",
+  "top_k": 5
+}
+
+### Cache Test - Same Query
+POST {{baseUrl}}/query
+Content-Type: application/json
+
+{
+  "query": "What is artificial intelligence?",
+  "top_k": 3
+}
+
+### Batch Query
+POST {{baseUrl}}/query/batch
+Content-Type: application/json
+
+{
+  "queries": [
+    {"query": "What is deep learning?", "top_k": 3},
+    {"query": "What is a neural network?", "top_k": 3},
+    {"query": "Explain machine learning", "top_k": 3}
+  ]
+}

@@ -1,0 +1,37 @@
+### Master Node - All Endpoints
+@baseUrl = http://127.0.0.1:9000
+
+### Health Check
+GET {{baseUrl}}/health
+
+### List Workers
+GET {{baseUrl}}/workers
+
+### Get Metrics
+GET {{baseUrl}}/metrics
+
+### Register Worker
+POST {{baseUrl}}/register
+Content-Type: application/json
+
+{
+  "worker_id": "worker-1",
+  "port": 8001,
+  "host": "localhost"
+}
+
+### Register Worker 2
+POST {{baseUrl}}/register
+Content-Type: application/json
+
+{
+  "worker_id": "worker-2",
+  "port": 8002,
+  "host": "localhost"
+}
+
+### Remove Worker
+DELETE {{baseUrl}}/worker/worker-1
+
+### Clear All Workers
+DELETE {{baseUrl}}/workers/clear

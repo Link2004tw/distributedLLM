@@ -1,0 +1,118 @@
+### GPU Load Balancer - All Endpoints
+@baseUrl = http://127.0.0.1:8000
+
+### Health Check
+GET {{baseUrl}}/health
+
+### List Workers
+GET {{baseUrl}}/workers
+
+### Get Current Strategy
+GET {{baseUrl}}/strategy
+
+### Get Statistics
+GET {{baseUrl}}/stats
+
+### Query - Single Request
+POST {{baseUrl}}/query
+Content-Type: application/json
+
+{
+  "query": "What is machine learning?",
+  "top_k": 3
+}
+
+### Query - Different Question
+POST {{baseUrl}}/query
+Content-Type: application/json
+
+{
+  "query": "Explain distributed systems",
+  "top_k": 3
+}
+
+### Query - Cached Test (Same question)
+POST {{baseUrl}}/query
+Content-Type: application/json
+
+{
+  "query": "What is machine learning?",
+  "top_k": 3
+}
+
+### Change Strategy to Round Robin
+POST {{baseUrl}}/strategy
+Content-Type: application/json
+
+{
+  "strategy": "round_robin"
+}
+
+### Change Strategy to Least Connections
+POST {{baseUrl}}/strategy
+Content-Type: application/json
+
+{
+  "strategy": "least_connections"
+}
+
+### Change Strategy to Hybrid
+POST {{baseUrl}}/strategy
+Content-Type: application/json
+
+{
+  "strategy": "hybrid"
+}
+
+### Change Strategy to GPU-Aware
+POST {{baseUrl}}/strategy
+Content-Type: application/json
+
+{
+  "strategy": "gpu_aware"
+}
+
+### Mark Worker Unhealthy
+POST {{baseUrl}}/worker/unhealthy
+Content-Type: application/json
+
+{
+  "worker_id": "worker-1"
+}
+
+### Mark Worker Healthy
+POST {{baseUrl}}/worker/healthy
+Content-Type: application/json
+
+{
+  "worker_id": "worker-1"
+}
+
+### Add New Worker
+POST {{baseUrl}}/workers/add
+Content-Type: application/json
+
+{
+  "worker_id": "worker-5",
+  "host": "localhost",
+  "port": 8005
+}
+
+### Remove Worker
+POST {{baseUrl}}/workers/remove
+Content-Type: application/json
+
+{
+  "worker_id": "worker-4"
+}
+
+### Batch Query (if supported)
+POST {{baseUrl}}/query/batch
+Content-Type: application/json
+
+{
+  "queries": [
+    {"query": "What is AI?", "top_k": 3},
+    {"query": "What is ML?", "top_k": 3}
+  ]
+}
