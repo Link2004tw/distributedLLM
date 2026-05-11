@@ -1,6 +1,7 @@
 import os
 import time
 import uuid
+from contextlib import asynccontextmanager
 from typing import List
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -10,7 +11,21 @@ from concurrent.futures import ThreadPoolExecutor
 from rag.retriever import retriever
 from llm.inference import inference_engine
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with httpx.AsyncClient() as client:
+        try:
+            await client.post(
+                f"{MASTER_NODE_URL}/register",
+                json={"worker_id": WORKER_ID, "port": WORKER_PORT},
+            )
+        except Exception:
+            pass
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 WORKER_ID = os.environ.get("WORKER_ID", f"worker-{uuid.uuid4().hex[:8]}")
 WORKER_PORT = int(os.environ.get("PORT", 8001))
@@ -26,18 +41,6 @@ class QueryRequest(BaseModel):
     query: str
     user_id: str = ""
     top_k: int = 3
-
-
-@app.on_event("startup")
-async def startup_event():
-    async with httpx.AsyncClient() as client:
-        try:
-            await client.post(
-                f"{MASTER_NODE_URL}/register",
-                json={"worker_id": WORKER_ID, "port": WORKER_PORT},
-            )
-        except Exception:
-            pass
 
 
 def process_request_sync(query: str, top_k: int) -> dict:
@@ -78,6 +81,17 @@ async def handle_query(request: QueryRequest):
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         active_connections -= 1
+
+
+@app.get("/ready")
+async def ready_check():
+    try:
+        loop = __import__("asyncio").get_event_loop()
+        future = loop.run_in_executor(None, lambda: inference_engine.generate("ping"))
+        result = await __import__("asyncio").wait_for(future, timeout=15.0)
+        return {"ready": True, "worker_id": WORKER_ID}
+    except Exception as e:
+        return {"ready": False, "error": str(e)}
 
 
 @app.get("/health")

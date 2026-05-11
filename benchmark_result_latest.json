@@ -1,0 +1,26 @@
+{
+  "total": 100,
+  "success": 100,
+  "failed": 0,
+  "error_rate": 0.0,
+  "total_time_s": 142.88,
+  "throughput_rps": 0.7,
+  "avg_latency_s": 26.1031,
+  "min_latency_s": 1.8673,
+  "max_latency_s": 33.9165,
+  "p50_s": 27.9618,
+  "p95_s": 33.3789,
+  "p99_s": 33.5357,
+  "sample_errors": [],
+  "label": "single-test",
+  "config": {
+    "workers": 4,
+    "model": "qwen2.5:0.5b",
+    "concurrency": 20,
+    "strategy": "round_robin",
+    "ollama_num_gpu": "",
+    "ollama_ctx": "",
+    "ollama_batch": "",
+    "embedding_model": "nomic-embed-text:latest"
+  }
+}
