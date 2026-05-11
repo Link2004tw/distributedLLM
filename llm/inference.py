@@ -42,6 +42,16 @@ Question: {query}
 Answer based on the context above:"""
         return self.generate(prompt)
 
+    def stream_with_context(self, query: str, context_docs: List[str]):
+        context = "\n\n".join(context_docs)
+        prompt = f"""Context information:
+{context}
+
+Question: {query}
+
+Answer based on the context above:"""
+        return self.generate(prompt, streaming=True)
+
     def generate_batch(self, queries: List[str], contexts: List[List[str]]) -> List[str]:
         prompts = []
         for query, docs in zip(queries, contexts):

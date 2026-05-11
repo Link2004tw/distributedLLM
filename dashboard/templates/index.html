@@ -173,9 +173,48 @@
         </div>
 
         <div class="card">
-            <div class="card-title">Active Connections</div>
-            <div id="activeConnections" class="card-value warning">0</div>
+            <div class="card-title">P99 Latency</div>
+            <div id="p99Latency" class="card-value">0 ms</div>
         </div>
+    </div>
+
+    <div class="grid">
+        <div class="card">
+            <div class="card-title">P50 Latency</div>
+            <div id="p50Latency" class="card-value">0 ms</div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">P90 Latency</div>
+            <div id="p90Latency" class="card-value">0 ms</div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Min Latency</div>
+            <div id="minLatency" class="card-value">0 ms</div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Max Latency</div>
+            <div id="maxLatency" class="card-value">0 ms</div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Worker Throughput</h2>
+        <table>
+            <thead>
+            <tr>
+                <th>Worker ID</th>
+                <th>Requests Processed</th>
+            </tr>
+            </thead>
+            <tbody id="throughputTable">
+            <tr>
+                <td colspan="2">Loading...</td>
+            </tr>
+            </tbody>
+        </table>
     </div>
 
     <div class="card">
@@ -237,33 +276,62 @@
 
     async function refreshDashboard() {
         try {
-            const response = await fetch("/api/overview");
-            const data = await response.json();
+            const overviewResponse = await fetch("/api/overview");
+            const overviewData = await overviewResponse.json();
 
-            const metrics = data.metrics || {};
-            const workers = data.workers || [];
-            const nginx = data.nginx || {};
+            const metrics = overviewData.metrics || {};
+            const workers = overviewData.workers || [];
+            const nginx = overviewData.nginx || {};
 
-            const totalRequests = numberValue(metrics.total_requests);
-            const failedWorkers = numberValue(metrics.failed_workers);
+            const lbResponse = await fetch("/api/lb-stats");
+            const lbData = await lbResponse.json();
+            const latency = lbData.latency || {};
+
+            const totalRequests = numberValue(lbData.total_requests || metrics.total_requests);
+            const successful = numberValue(lbData.successful_requests || 0);
+            const failed = numberValue(lbData.failed_requests || 0);
+            const errorRate = numberValue(lbData.error_rate_percent || 0);
             const activeConns = numberValue(nginx.active_connections) || numberValue(metrics.active_connections);
 
             document.getElementById("totalRequests").textContent = totalRequests;
-            document.getElementById("successRequests").textContent = totalRequests;
-            document.getElementById("failedRequests").textContent = failedWorkers;
-            document.getElementById("errorRate").textContent = `0%`;
+            document.getElementById("successRequests").textContent = successful;
+            document.getElementById("failedRequests").textContent = failed;
+            document.getElementById("errorRate").textContent = `${errorRate.toFixed(2)}%`;
 
             document.getElementById("throughput").textContent =
                 `${numberValue(0).toFixed(2)} req/s`;
 
             document.getElementById("avgLatency").textContent =
-                formatMs(metrics.avg_latency_ms);
+                formatMs(latency.avg_ms || metrics.avg_latency_ms);
 
+            document.getElementById("p50Latency").textContent =
+                formatMs(latency.p50_ms);
+            document.getElementById("p90Latency").textContent =
+                formatMs(latency.p90_ms);
             document.getElementById("p95Latency").textContent =
-                formatMs(metrics.avg_latency_ms);
+                formatMs(latency.p95_ms);
+            document.getElementById("p99Latency").textContent =
+                formatMs(latency.p99_ms);
+            document.getElementById("minLatency").textContent =
+                formatMs(latency.min_ms);
+            document.getElementById("maxLatency").textContent =
+                formatMs(latency.max_ms);
 
-            document.getElementById("activeConnections").textContent =
-                activeConns;
+            const throughputTable = document.getElementById("throughputTable");
+            const perWorkerThroughput = lbData.per_worker_throughput || {};
+            if (Object.keys(perWorkerThroughput).length === 0) {
+                throughputTable.innerHTML = `<tr><td colspan="2">No throughput data yet.</td></tr>`;
+            } else {
+                throughputTable.innerHTML = "";
+                for (const [workerId, count] of Object.entries(perWorkerThroughput)) {
+                    throughputTable.innerHTML += `
+                        <tr>
+                            <td>${workerId}</td>
+                            <td>${numberValue(count)}</td>
+                        </tr>
+                    `;
+                }
+            }
 
             const table = document.getElementById("workersTable");
             table.innerHTML = "";

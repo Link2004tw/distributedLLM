@@ -5,8 +5,9 @@ import asyncio
 import subprocess
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, AsyncIterator
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import httpx
 
@@ -503,7 +504,7 @@ async def get_capabilities():
         "single_query": True,
         "batch_processing": True,
         "batch_optimized": True,
-        "streaming": False,
+        "streaming": True,
         "gpu_accelerated": True,
         "max_batch_size": BATCH_SIZE,
         "max_concurrent": MAX_CONCURRENT_TASKS,
@@ -523,3 +524,34 @@ async def handle_fallback_query(request: QueryRequest):
         "retrieval_time_ms": 0,
         "cache_hit": False,
     }
+
+
+async def stream_generator(query: str, top_k: int) -> AsyncIterator[str]:
+    try:
+        loop = asyncio.get_event_loop()
+        docs = await retrieve_docs(query, top_k)
+
+        if not docs:
+            yield "data: {\"type\": \"done\", \"content\": \"I don't have relevant documents.\"}\n\n"
+            return
+
+        def generate_stream():
+            return inference_engine.stream_with_context(query, docs)
+
+        stream = await loop.run_in_executor(None, generate_stream)
+
+        for chunk in stream:
+            yield f"data: {{\"type\": \"chunk\", \"content\": {repr(chunk)}}}\n\n"
+
+        yield "data: {\"type\": \"done\", \"content\": null}\n\n"
+
+    except Exception as e:
+        yield f"data: {{\"type\": \"error\", \"content\": {repr(str(e))}}}\n\n"
+
+
+@app.post("/query/stream")
+async def handle_stream_query(request: QueryRequest):
+    return StreamingResponse(
+        stream_generator(request.query, request.top_k),
+        media_type="text/event-stream"
+    )

@@ -1,9 +1,11 @@
 import os
 import asyncio
 import time
+import json
 import httpx
+from pathlib import Path
 from typing import Dict, List, Optional, Set
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from enum import Enum
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -22,9 +24,9 @@ httpx_client: Optional[httpx.AsyncClient] = None
 class RoutingStrategy(str, Enum):
     ROUND_ROBIN = "round_robin"
     LEAST_CONNECTIONS = "least_connections"
-    HYBRID = "hybrid"
+    LOAD_AWARE = "load_aware"
     GPU_AWARE = "gpu_aware"
-    CAPACITY_AWARE = "capacity_aware"
+    HYBRID = "hybrid"
 
 
 @dataclass
@@ -53,6 +55,9 @@ class RoutingState:
     total_requests: int = 0
     failed_requests: int = 0
     reassigned_requests: int = 0
+    successful_requests: int = 0
+    request_latencies: deque = field(default_factory=lambda: deque(maxlen=1000))
+    per_worker_throughput: Dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -70,6 +75,61 @@ pending_requests: List[FailedRequest] = []
 MAX_REASSIGN_ATTEMPTS = 3
 MAX_CONCURRENT_REQUESTS = 50
 request_semaphore: Optional[asyncio.Semaphore] = None
+
+PERSISTENCE_FILE = Path(os.environ.get("PENDING_REQUESTS_FILE", "./pending_requests.json"))
+
+
+def save_pending_requests():
+    try:
+        data = {
+            "requests": [
+                {
+                    "query": r.query,
+                    "top_k": r.top_k,
+                    "attempts": r.attempts,
+                    "failed_workers": list(r.failed_workers)
+                }
+                for r in pending_requests
+            ],
+            "timestamp": time.time()
+        }
+        with open(PERSISTENCE_FILE, "w") as f:
+            json.dump(data, f)
+    except Exception as e:
+        print(f"Failed to save pending requests: {e}")
+
+
+def load_pending_requests():
+    global pending_requests
+    if not PERSISTENCE_FILE.exists():
+        return
+
+    try:
+        with open(PERSISTENCE_FILE, "r") as f:
+            data = json.load(f)
+
+        requests = []
+        for r in data.get("requests", []):
+            requests.append(FailedRequest(
+                query=r["query"],
+                top_k=r["top_k"],
+                attempts=r.get("attempts", 0),
+                failed_workers=set(r.get("failed_workers", []))
+            ))
+
+        if requests:
+            pending_requests = requests
+            print(f"Loaded {len(requests)} pending requests from disk")
+    except Exception as e:
+        print(f"Failed to load pending requests: {e}")
+
+
+def clear_persistent_requests():
+    try:
+        if PERSISTENCE_FILE.exists():
+            PERSISTENCE_FILE.unlink()
+    except Exception:
+        pass
 
 
 class QueryRequest(BaseModel):
@@ -179,16 +239,19 @@ def select_gpu_aware() -> Optional[WorkerState]:
     return min(healthy, key=gpu_score)
 
 
-def select_capacity_aware() -> Optional[WorkerState]:
+def select_load_aware() -> Optional[WorkerState]:
     healthy = get_healthy_workers()
     if not healthy:
         return None
 
-    def capacity_score(w: WorkerState) -> float:
-        conn_ratio = w.active_connections / max(w.queue_available, 1)
-        return conn_ratio
+    def load_score(w: WorkerState) -> float:
+        conn_score = w.active_connections * 30
+        latency_score = w.avg_latency_ms * 10
+        queue_penalty = max(0, 50 - w.queue_available) * 5
+        gpu_penalty = w.gpu_utilization * 5
+        return conn_score + latency_score + queue_penalty + gpu_penalty
 
-    return min(healthy, key=capacity_score)
+    return min(healthy, key=load_score)
 
 
 def select_worker() -> Optional[WorkerState]:
@@ -196,12 +259,12 @@ def select_worker() -> Optional[WorkerState]:
         return select_round_robin()
     elif current_strategy == RoutingStrategy.LEAST_CONNECTIONS:
         return select_least_connections()
-    elif current_strategy == RoutingStrategy.HYBRID:
-        return select_hybrid()
+    elif current_strategy == RoutingStrategy.LOAD_AWARE:
+        return select_load_aware()
     elif current_strategy == RoutingStrategy.GPU_AWARE:
         return select_gpu_aware()
-    elif current_strategy == RoutingStrategy.CAPACITY_AWARE:
-        return select_capacity_aware()
+    elif current_strategy == RoutingStrategy.HYBRID:
+        return select_hybrid()
     return select_round_robin()
 
 
@@ -243,8 +306,8 @@ async def reassign_pending_requests():
                 mem_ratio = mem / max(w.gpu_memory_mb, 1)
                 return util + (mem_ratio * 50) + (conn * 10)
             worker = min(healthy, key=gpu_score)
-        elif current_strategy == RoutingStrategy.CAPACITY_AWARE:
-            worker = min(healthy, key=lambda w: w.active_connections / max(w.queue_available, 1))
+        elif current_strategy == RoutingStrategy.LOAD_AWARE:
+            worker = min(healthy, key=lambda w: w.active_connections * 30 + w.avg_latency_ms * 10 + max(0, 50 - w.queue_available) * 5 + w.gpu_utilization * 5)
         else:
             worker = healthy[0]
 
@@ -266,6 +329,7 @@ async def reassign_pending_requests():
             still_pending.append(req)
 
     pending_requests = still_pending
+    save_pending_requests()
 
 
 async def forward_to_worker(worker: WorkerState, query: str, top_k: int, exclude_workers: Set[str] = None) -> dict:
@@ -324,8 +388,8 @@ async def forward_to_worker(worker: WorkerState, query: str, top_k: int, exclude
                 mem_ratio = mem / max(w.gpu_memory_mb, 1)
                 return util + (mem_ratio * 50) + (conn * 10)
             alt_worker = min(healthy, key=gpu_score)
-        elif current_strategy == RoutingStrategy.CAPACITY_AWARE:
-            alt_worker = min(healthy, key=lambda w: w.active_connections / max(w.queue_available, 1))
+        elif current_strategy == RoutingStrategy.LOAD_AWARE:
+            alt_worker = min(healthy, key=lambda w: w.active_connections * 30 + w.avg_latency_ms * 10 + max(0, 50 - w.queue_available) * 5 + w.gpu_utilization * 5)
         else:
             alt_worker = healthy[0]
 
@@ -336,6 +400,7 @@ async def forward_to_worker(worker: WorkerState, query: str, top_k: int, exclude
             pass
 
     pending_requests.append(FailedRequest(query=query, top_k=top_k, attempts=1, failed_workers=exclude_set))
+    save_pending_requests()
     if last_error and isinstance(last_error, HTTPException):
         raise last_error
     raise HTTPException(status_code=503, detail="All retries and reassignments failed")
@@ -346,6 +411,8 @@ async def startup():
     global request_semaphore
     await init_httpx()
     request_semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+
+    load_pending_requests()
 
     default_workers = [
         ("worker-1", "localhost", 8001),
@@ -367,12 +434,15 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
+    save_pending_requests()
     await close_httpx()
 
 
 @app.post("/query")
 async def handle_query(request: QueryRequest):
+    import time
     routing_state.total_requests += 1
+    start_time = time.time()
 
     worker = select_worker()
     if not worker:
@@ -382,6 +452,15 @@ async def handle_query(request: QueryRequest):
     try:
         async with request_semaphore:
             result = await forward_to_worker(worker, request.query, request.top_k)
+
+        latency_ms = (time.time() - start_time) * 1000
+        routing_state.request_latencies.append(latency_ms)
+        routing_state.successful_requests += 1
+
+        if worker.worker_id not in routing_state.per_worker_throughput:
+            routing_state.per_worker_throughput[worker.worker_id] = 0
+        routing_state.per_worker_throughput[worker.worker_id] += 1
+
         worker.active_connections = max(0, worker.active_connections - 1)
         return result
     except Exception as e:
@@ -448,19 +527,44 @@ async def set_strategy(request: StrategyRequest):
         )
 
 
+def calculate_percentile(values: List[float], percentile: float) -> float:
+    if not values:
+        return 0.0
+    sorted_vals = sorted(values)
+    idx = int((percentile / 100) * len(sorted_vals))
+    idx = min(idx, len(sorted_vals) - 1)
+    return round(sorted_vals[max(0, idx)], 2)
+
+
 @app.get("/stats")
 async def get_stats():
     healthy = get_healthy_workers()
+    latencies = list(routing_state.request_latencies)
+
     return {
         "total_workers": len(workers),
         "healthy_workers": len(healthy),
         "current_strategy": current_strategy.value,
         "total_requests": routing_state.total_requests,
+        "successful_requests": routing_state.successful_requests,
         "failed_requests": routing_state.failed_requests,
         "reassigned_requests": routing_state.reassigned_requests,
         "pending_requests": len(pending_requests),
+        "error_rate_percent": round((routing_state.failed_requests / routing_state.total_requests * 100), 2) if routing_state.total_requests > 0 else 0,
         "avg_gpu_utilization": sum(w.gpu_utilization for w in healthy) / len(healthy) if healthy else 0,
         "total_active_connections": sum(w.active_connections for w in workers.values()),
+        "latency": {
+            "count": len(latencies),
+            "avg_ms": round(sum(latencies) / len(latencies), 2) if latencies else 0,
+            "min_ms": round(min(latencies), 2) if latencies else 0,
+            "max_ms": round(max(latencies), 2) if latencies else 0,
+            "p50_ms": calculate_percentile(latencies, 50),
+            "p75_ms": calculate_percentile(latencies, 75),
+            "p90_ms": calculate_percentile(latencies, 90),
+            "p95_ms": calculate_percentile(latencies, 95),
+            "p99_ms": calculate_percentile(latencies, 99),
+        },
+        "per_worker_throughput": dict(routing_state.per_worker_throughput),
     }
 
 
@@ -474,6 +578,19 @@ async def pending_retry_loop():
 @app.get("/health")
 async def health():
     return {"status": "healthy", "strategy": current_strategy.value}
+
+
+@app.post("/pending/clear")
+async def clear_pending():
+    global pending_requests
+    pending_requests = []
+    clear_persistent_requests()
+    return {"status": "ok", "message": "Pending requests cleared"}
+
+
+@app.get("/pending/count")
+async def get_pending_count():
+    return {"count": len(pending_requests), "persistence_file": str(PERSISTENCE_FILE)}
 
 
 @app.post("/workers/add")

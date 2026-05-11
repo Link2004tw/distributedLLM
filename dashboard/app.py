@@ -10,6 +10,7 @@ from fastapi.templating import Jinja2Templates
 
 MASTER_URL = os.getenv("MASTER_URL", "http://127.0.0.1:9000")
 NGINX_URL = os.getenv("NGINX_URL", "http://127.0.0.1:8000")
+LB_URL = os.getenv("LB_URL", "http://127.0.0.1:8000")
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
@@ -34,6 +35,28 @@ def fallback_metrics():
         "active_connections": 0,
         "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "_warning": "Master metrics endpoint is not available yet."
+    }
+
+
+def fallback_lb_stats():
+    return {
+        "total_requests": 0,
+        "successful_requests": 0,
+        "failed_requests": 0,
+        "error_rate_percent": 0,
+        "latency": {
+            "count": 0,
+            "avg_ms": 0,
+            "min_ms": 0,
+            "max_ms": 0,
+            "p50_ms": 0,
+            "p75_ms": 0,
+            "p90_ms": 0,
+            "p95_ms": 0,
+            "p99_ms": 0,
+        },
+        "per_worker_throughput": {},
+        "_warning": "Load balancer stats not available yet."
     }
 
 
@@ -94,6 +117,19 @@ async def fetch_from_master(path: str, fallback_function):
         return data
 
 
+async def fetch_from_lb(path: str, fallback_function):
+    url = f"{LB_URL}{path}"
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            return response.json()
+    except Exception as e:
+        data = fallback_function()
+        data["_error"] = str(e)
+        return data
+
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard_home(request: Request):
     return templates.TemplateResponse(
@@ -109,6 +145,41 @@ async def dashboard_home(request: Request):
 @app.get("/api/metrics")
 async def get_metrics():
     return await fetch_from_master("/metrics", fallback_metrics)
+
+
+@app.get("/api/lb-stats")
+async def get_lb_stats():
+    return await fetch_from_lb("/stats", fallback_lb_stats)
+
+
+@app.get("/api/comprehensive-metrics")
+async def get_comprehensive_metrics():
+    lb_stats = await fetch_from_lb("/stats", fallback_lb_stats)
+    workers = await fetch_from_master("/workers", fallback_workers)
+
+    latency = lb_stats.get("latency", {})
+
+    return {
+        "overview": {
+            "total_requests": lb_stats.get("total_requests", 0),
+            "successful": lb_stats.get("successful_requests", 0),
+            "failed": lb_stats.get("failed_requests", 0),
+            "error_rate": lb_stats.get("error_rate_percent", 0),
+        },
+        "latency": {
+            "avg_ms": latency.get("avg_ms", 0),
+            "min_ms": latency.get("min_ms", 0),
+            "max_ms": latency.get("max_ms", 0),
+            "p50_ms": latency.get("p50_ms", 0),
+            "p75_ms": latency.get("p75_ms", 0),
+            "p90_ms": latency.get("p90_ms", 0),
+            "p95_ms": latency.get("p95_ms", 0),
+            "p99_ms": latency.get("p99_ms", 0),
+        },
+        "workers": workers.get("workers", []),
+        "per_worker_throughput": lb_stats.get("per_worker_throughput", {}),
+        "timestamp": time.time()
+    }
 
 
 @app.get("/api/workers")

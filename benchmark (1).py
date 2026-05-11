@@ -133,11 +133,20 @@ def wait_for_worker_ready(url: str, timeout: int = 90):
     return False
 
 
-def run_load_test(total_requests: int, concurrency: int, url: str = "http://127.0.0.1:8000", timeout_s: float = 120.0):
+def run_load_test(total_requests: int, concurrency: int, url: str = "http://127.0.0.1:8000", timeout_s: float = 120.0, worker_urls: list = None):
     import httpx
     from concurrent.futures import ThreadPoolExecutor, as_completed
+    import itertools
 
-    query_url = f"{url}/query"
+    if worker_urls:
+        worker_iter = itertools.cycle([f"{w}/query" for w in worker_urls])
+        def get_url(i):
+            return next(worker_iter)
+    else:
+        single_url = f"{url}/query"
+        def get_url(i):
+            return single_url
+
     samples = [
         "What is distributed inference?",
         "Explain load balancing.",
@@ -161,7 +170,7 @@ def run_load_test(total_requests: int, concurrency: int, url: str = "http://127.
                 payload = {"query": samples[i % len(samples)], "top_k": 1}
                 start = time.perf_counter()
                 try:
-                    r = client.post(query_url, json=payload, timeout=timeout_s)
+                    r = client.post(get_url(i), json=payload, timeout=timeout_s)
                     lat = time.perf_counter() - start
                     return {"success": r.status_code == 200, "latency": lat,
                             "status": r.status_code, "error": None if r.status_code == 200 else r.text}
@@ -202,146 +211,38 @@ def run_load_test(total_requests: int, concurrency: int, url: str = "http://127.
     }
 
 
-RAG_TEST_QUERIES = [
-    {
-        "query": "What is a dog?",
-        "expected_keywords": ["dog", "canine", "pet", "mammal", "animal"],
-        "description": "Dog-related query"
-    },
-    {
-        "query": "Tell me about cats",
-        "expected_keywords": ["cat", "feline", "pet", "mammal", "animal"],
-        "description": "Cat-related query"
-    },
-    {
-        "query": "What do you know about hamsters?",
-        "expected_keywords": ["hamster", "rodent", "pet", "small"],
-        "description": "Hamster-related query"
-    },
-    {
-        "query": "Explain artificial intelligence",
-        "expected_keywords": ["ai", "artificial", "intelligence", "machine"],
-        "description": "AI definition query"
-    },
-    {
-        "query": "What is machine learning?",
-        "expected_keywords": ["machine", "learning", "ml", "model", "algorithm"],
-        "description": "ML definition query"
-    },
-]
-
-
-def check_rag_accuracy(query_url: str, timeout_s: float = 60.0) -> dict:
-    import httpx
-
-    results = []
-    retrieval_times = []
-
-    with httpx.Client(timeout=timeout_s) as client:
-        for test in RAG_TEST_QUERIES:
-            try:
-                start = time.perf_counter()
-                r = client.post(query_url, json={"query": test["query"], "top_k": 3})
-                retrieval_time = time.perf_counter() - start
-
-                if r.status_code != 200:
-                    results.append({
-                        "query": test["query"],
-                        "description": test["description"],
-                        "success": False,
-                        "has_sources": False,
-                        "keyword_match": False,
-                        "match_score": 0,
-                        "error": r.text[:100]
-                    })
-                    continue
-
-                data = r.json()
-                answer = data.get("answer", "").lower()
-                sources = data.get("sources", [])
-                retrieval_times.append(retrieval_time)
-
-                has_sources = len(sources) > 0
-                sources_text = " ".join(sources).lower()
-                all_text = (answer + " " + sources_text).lower()
-
-                keyword_matches = sum(
-                    1 for kw in test["expected_keywords"]
-                    if kw.lower() in all_text
-                )
-                match_score = keyword_matches / len(test["expected_keywords"])
-                keyword_match = match_score >= 0.3
-
-                results.append({
-                    "query": test["query"],
-                    "description": test["description"],
-                    "success": True,
-                    "has_sources": has_sources,
-                    "keyword_match": keyword_match,
-                    "match_score": round(match_score, 2),
-                    "sources_count": len(sources),
-                    "retrieval_time_ms": round(retrieval_time * 1000, 2)
-                })
-            except Exception as e:
-                results.append({
-                    "query": test["query"],
-                    "description": test["description"],
-                    "success": False,
-                    "has_sources": False,
-                    "keyword_match": False,
-                    "match_score": 0,
-                    "error": str(e)[:100]
-                })
-
-    total = len(results)
-    successful = sum(1 for r in results if r["success"])
-    with_sources = sum(1 for r in results if r["has_sources"])
-    keyword_matches = sum(1 for r in results if r["keyword_match"])
-    avg_retrieval_time = sum(retrieval_times) / len(retrieval_times) if retrieval_times else 0
-
-    return {
-        "total_queries": total,
-        "successful": successful,
-        "has_sources": with_sources,
-        "keyword_matches": keyword_matches,
-        "rag_accuracy_percent": round((keyword_matches / total) * 100, 1) if total else 0,
-        "sources_coverage_percent": round((with_sources / total) * 100, 1) if total else 0,
-        "avg_retrieval_time_ms": round(avg_retrieval_time * 1000, 2),
-        "details": results
-    }
-
-
 def run_single_benchmark(label: str, workers: int, model: str,
                          requests: int, concurrency: int,
                          nginx_strategy: str = "round_robin",
                          ollama_num_gpu: str = "",
                          ollama_ctx: str = "",
                          ollama_batch: str = "",
-                         embedding_model: str = "nomic-embed-text:latest"):
+                         embedding_model: str = "nomic-embed-text:latest",
+                         direct: bool = False):
     log(f"\n{'='*60}")
     log(f"BENCHMARK: {label}")
     log(f"  workers={workers}, model={model}, concurrency={concurrency}")
-    log(f"  strategy={nginx_strategy}, num_gpu={ollama_num_gpu or 'default'}")
+    log(f"  strategy={'direct' if direct else nginx_strategy}, num_gpu={ollama_num_gpu or 'default'}")
     log(f"{'='*60}")
 
     procs = []
-
-    nginx_exe = ROOT / "lb" / "nginx" / "nginx.exe"
-    nginx_dir = ROOT / "lb" / "nginx"
     try:
-        nginx_conf_path = ROOT / "lb" / "nginx" / "conf" / "nginx.conf"
-        if nginx_conf_path.exists():
-            content = nginx_conf_path.read_text()
-            if nginx_strategy == "least_connections":
-                content = content.replace("# least_conn;", "least_conn;")
-                if "least_conn;" not in content:
-                    content = content.replace("server localhost", "least_conn;\n        server localhost")
-            else:
-                content = content.replace("least_conn;", "# least_conn;")
-            nginx_conf_path.write_text(content)
-            subprocess.run([str(nginx_exe), "-p", str(nginx_dir), "-s", "reload"],
-                           capture_output=True, timeout=10)
-        log(f"NGINX strategy: {nginx_strategy}")
+        if not direct:
+            nginx_exe = ROOT / "lb" / "nginx" / "nginx.exe"
+            nginx_dir = ROOT / "lb" / "nginx"
+            nginx_conf_path = ROOT / "lb" / "nginx" / "conf" / "nginx.conf"
+            if nginx_conf_path.exists():
+                content = nginx_conf_path.read_text()
+                if nginx_strategy == "least_connections":
+                    content = content.replace("# least_conn;", "least_conn;")
+                    if "least_conn;" not in content:
+                        content = content.replace("server localhost", "least_conn;\n        server localhost")
+                else:
+                    content = content.replace("least_conn;", "# least_conn;")
+                nginx_conf_path.write_text(content)
+                subprocess.run([str(nginx_exe), "-p", str(nginx_dir), "-s", "reload"],
+                               capture_output=True, timeout=10)
+            log(f"NGINX strategy: {nginx_strategy}")
 
         log("Starting master...")
         p = start_component("master", "master.monitor", 9000)
@@ -358,9 +259,6 @@ def run_single_benchmark(label: str, workers: int, model: str,
                 "LLM_MODEL": model,
                 "EMBEDDING_MODEL": embedding_model,
                 "WORKER_ID": wid,
-                "MAX_CONCURRENT_TASKS": str(max(10, concurrency)),
-                "BACKPRESSURE_QUEUE_SIZE": str(max(50, concurrency * 3)),
-                "CACHE_SIZE": "500",
             }
             if ollama_num_gpu:
                 env["OLLAMA_NUM_GPU"] = ollama_num_gpu
@@ -374,19 +272,28 @@ def run_single_benchmark(label: str, workers: int, model: str,
                 log(f"FAIL: {wid} not ready (model load error)")
                 return None
 
-        log("All workers ready. Running load test...")
-        result = run_load_test(requests, concurrency)
+        log("Warming up models (cold-start avoidance)...")
+        import httpx
+        warmup_targets = [f"http://127.0.0.1:{8000 + i}" for i in range(1, workers + 1)] if direct else ["http://127.0.0.1:8000"]
+        for target in warmup_targets:
+            for _ in range(2):
+                try:
+                    httpx.post(f"{target}/query",
+                               json={"query": "warmup", "top_k": 1},
+                               timeout=30.0)
+                except Exception:
+                    pass
 
-        log("Testing RAG accuracy...")
-        rag_result = check_rag_accuracy("http://127.0.0.1:8000/query")
-        result["rag_accuracy"] = rag_result
+        log("Running load test...")
+        worker_urls = [f"http://127.0.0.1:{8000 + i}" for i in range(1, workers + 1)] if direct else None
+        result = run_load_test(requests, concurrency, worker_urls=worker_urls)
 
         result["label"] = label
         result["config"] = {
             "workers": workers,
             "model": model,
             "concurrency": concurrency,
-            "strategy": nginx_strategy,
+            "strategy": "direct" if direct else nginx_strategy,
             "ollama_num_gpu": ollama_num_gpu,
             "ollama_ctx": ollama_ctx,
             "ollama_batch": ollama_batch,
@@ -440,7 +347,9 @@ def run_benchmark_suite(args):
     for model in models:
         for wc in worker_counts:
             for cc in concurrencies:
-                label = f"model={model} workers={wc} concurrency={cc} rr"
+                label = f"model={model} workers={wc} concurrency={cc}"
+                if not args.direct:
+                    label += " rr"
                 r = run_single_benchmark(
                     label=label,
                     workers=wc,
@@ -452,24 +361,27 @@ def run_benchmark_suite(args):
                     ollama_ctx=args.ctx,
                     ollama_batch=args.batch,
                     embedding_model=args.embedding_model,
+                    direct=args.direct,
                 )
                 if r:
                     results.append(r)
                     _print_result(r)
 
-                label_lc = f"model={model} workers={wc} concurrency={cc} lc"
-                r = run_single_benchmark(
-                    label=label_lc,
-                    workers=wc,
-                    model=model,
-                    requests=requests_per_test,
-                    concurrency=cc,
-                    nginx_strategy="least_connections",
-                    ollama_num_gpu=args.num_gpu,
-                    ollama_ctx=args.ctx,
-                    ollama_batch=args.batch,
-                    embedding_model=args.embedding_model,
-                )
+                if not args.direct:
+                    label_lc = f"model={model} workers={wc} concurrency={cc} lc"
+                    r = run_single_benchmark(
+                        label=label_lc,
+                        workers=wc,
+                        model=model,
+                        requests=requests_per_test,
+                        concurrency=cc,
+                        nginx_strategy="least_connections",
+                        ollama_num_gpu=args.num_gpu,
+                        ollama_ctx=args.ctx,
+                        ollama_batch=args.batch,
+                        embedding_model=args.embedding_model,
+                        direct=args.direct,
+                    )
                 if r:
                     results.append(r)
                     _print_result(r)
@@ -494,27 +406,20 @@ def _print_result(r):
         for e in errors[:3]:
             print(f"    - {e[:120]}")
 
-    rag = r.get("rag_accuracy", {})
-    if rag:
-        print(f"  RAG Accuracy: {rag['rag_accuracy_percent']}% ({rag['keyword_matches']}/{rag['total_queries']} queries matched)")
-        print(f"  Sources Coverage: {rag['sources_coverage_percent']}% ({rag['has_sources']}/{rag['total_queries']})")
-        print(f"  Avg Retrieval Time: {rag['avg_retrieval_time_ms']}ms")
-
 
 def _print_summary(results):
     print(f"\n{'='*60}")
     print("BENCHMARK SUMMARY")
     print(f"{'='*60}")
-    print(f"{'Label':<45} {'Throughput':>10} {'RAG Acc':>8} {'Avg Lat':>10} {'Err%':>8}")
-    print("-" * 85)
+    print(f"{'Label':<50} {'Throughput':>10} {'Avg Lat':>10} {'P95':>10} {'Err%':>8}")
+    print("-" * 88)
     for r in results:
-        label = r.get("label", "")[:45]
+        label = r.get("label", "")[:50]
         thr = f"{r['throughput_rps']}r/s"
-        rag_acc = r.get("rag_accuracy", {}).get("rag_accuracy_percent", 0)
-        rag_str = f"{rag_acc:.0f}%" if rag_acc else "-"
         avg = f"{r['avg_latency_s']:.3f}s" if r['avg_latency_s'] else "-"
+        p95 = f"{r['p95_s']:.3f}s" if r['p95_s'] else "-"
         err = f"{r['error_rate']:.1f}%"
-        print(f"{label:<45} {thr:>10} {rag_str:>8} {avg:>10} {err:>8}")
+        print(f"{label:<50} {thr:>10} {avg:>10} {p95:>10} {err:>8}")
 
 
 def main():
@@ -537,17 +442,19 @@ def main():
                         help="Embedding model (default: nomic-embed-text:latest)")
     parser.add_argument("--single", action="store_true",
                         help="Run a single quick test and exit")
+    parser.add_argument("--direct", action="store_true",
+                        help="Bypass NGINX, send requests directly to workers")
     args = parser.parse_args()
 
     target = args.model or "smollm2:135m"
     if not check_ollama(target):
         sys.exit(1)
 
-    if not setup_nginx():
-        sys.exit(1)
-
-    if not start_nginx():
-        sys.exit(1)
+    if not args.direct:
+        if not setup_nginx():
+            sys.exit(1)
+        if not start_nginx():
+            sys.exit(1)
 
     try:
         if args.single:
@@ -561,6 +468,7 @@ def main():
                 ollama_ctx=args.ctx,
                 ollama_batch=args.batch,
                 embedding_model=args.embedding_model,
+                direct=args.direct,
             )
             if r:
                 _print_result(r)
@@ -570,7 +478,8 @@ def main():
         else:
             run_benchmark_suite(args)
     finally:
-        stop_nginx()
+        if not args.direct:
+            stop_nginx()
 
 
 if __name__ == "__main__":

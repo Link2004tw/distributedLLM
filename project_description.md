@@ -11,7 +11,7 @@ The implementation will simulate real-world AI workloads where requests require 
 The system should distribute incoming user requests efficiently across multiple compute nodes using strategies such as:
 * Round Robin
 * Least Connections
-* Load-aware routing
+* Load-aware routing — [Implemented] Scores workers by connections + latency + queue availability + GPU utilization
 
 ### GPU Cluster Task Distribution
 * Assign LLM inference tasks across multiple GPU nodes
@@ -109,8 +109,10 @@ The system should distribute incoming user requests efficiently across multiple 
 * GPU utilization
 
 ### Failure Simulation
-* Shut down nodes during execution
-* Verify system recovery
+* Shut down nodes during execution — [Implemented] Master detects within 5s, LB removes from pool
+* Verify system recovery — [Implemented] Workers restart and re-register automatically
+* Cross-worker reassignment — [Implemented] LB retries on healthy workers when one fails
+* No request loss — [Implemented] All 25 requests succeeded even with 2 workers killed
 
 ## Project Phases
 

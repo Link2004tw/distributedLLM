@@ -1,7 +1,7 @@
 # Test Suite
 
 ## Overview
-100 total tests across 6 modules.
+117 total tests across 6 modules.
 
 ---
 
@@ -33,12 +33,55 @@
 |------|-------------|
 | `test_capacity_aware_strategy` | Capacity-aware routing considers queue availability |
 | `test_worker_reports_queue_available` | Worker reports queue_available in health check |
+| `test_worker_batch_optimized_capability` | Worker reports batch_optimized capability |
+
+### TestBatchProcessing
+**Mark:** `load`
+
+| Test | Description |
+|------|-------------|
+| `test_batch_query_endpoint_exists` | Batch query endpoint is accessible |
+| `test_batch_query_returns_all_results` | Batch query returns all results |
+| `test_batch_query_includes_sources` | Batch results include answer, sources, latency |
 
 ### TestLoadBalancerQuery
 | Test | Description |
 |------|-------------|
 | `test_query_returns_answer` | Query endpoint returns answer and latency |
 | `test_query_uses_worker_gpu_stats` | Worker GPU stats are reported |
+
+### TestComprehensiveMetrics
+**Mark:** `health`
+
+| Test | Description |
+|------|-------------|
+| `test_stats_includes_latency_percentiles` | Stats include p50/p75/p90/p95/p99 latency |
+| `test_stats_includes_per_worker_throughput` | Stats include per-worker throughput tracking |
+
+### TestTaskQueuePersistence
+**Mark:** `fault_tolerance`
+
+| Test | Description |
+|------|-------------|
+| `test_pending_count_endpoint` | Pending count endpoint returns count and file |
+| `test_clear_pending_endpoint` | Clear pending requests endpoint works |
+
+### TestResponseStreaming
+**Mark:** `load`
+
+| Test | Description |
+|------|-------------|
+| `test_streaming_endpoint_exists` | Streaming endpoint exists and returns SSE |
+| `test_worker_reports_streaming_capability` | Worker reports streaming capability |
+
+### TestStressTesting
+**Mark:** `slow`
+
+| Test | Description |
+|------|-------------|
+| `test_load_generator_imports` | Load generator module imports correctly |
+| `test_stress_test_script_imports` | Stress test script imports correctly |
+| `test_low_concurrency_load` | Low concurrency load test works |
 
 ### TestLoadBalancerWorkerManagement
 | Test | Description |
