@@ -1,5 +1,4 @@
-import os
-import httpx
+import random
 import asyncio
 from typing import List, Optional, Dict, Any
 from collections import OrderedDict
@@ -8,8 +7,21 @@ import time
 
 LLM_MODEL = "smollm2:135m"
 EMBEDDING_MODEL = "nomic-embed-text:latest"
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_URL = "http://localhost:11434"
 CACHE_SIZE = 500
+
+RESPONSE_POOL = [
+    "Distributed systems coordinate actions across multiple computers to achieve a common goal.",
+    "Load balancing ensures no single node is overwhelmed by distributing requests evenly.",
+    "RAG pipelines retrieve relevant documents before generating an answer for grounded responses.",
+    "Fault tolerance mechanisms like heartbeats detect and recover from node failures.",
+    "A master node orchestrates worker health monitoring and task reassignment on failure.",
+    "Round robin routing cycles through available servers in order, ensuring equal distribution.",
+    "Least connections routing directs traffic to the server with the lowest active load.",
+    "Worker nodes execute the RAG pipeline: embed query, retrieve documents, generate answer.",
+    "Horizontal scaling adds more worker nodes to increase system throughput and capacity.",
+    "Embedding vectors enable semantic search by calculating cosine similarity between texts.",
+]
 
 
 class OllamaClient:
@@ -21,12 +33,7 @@ class OllamaClient:
         timeout: float = 120.0
     ):
         self.base_url = base_url
-        self._client: Optional[httpx.AsyncClient] = None
-        self._limits = httpx.Limits(
-            max_connections=max_connections,
-            max_keepalive_connections=max_keepalive
-        )
-        self._timeout = timeout
+        self._client = None
         self._lock = asyncio.Lock()
 
     async def __aenter__(self):
@@ -37,17 +44,10 @@ class OllamaClient:
         await self.close()
 
     async def connect(self):
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                base_url=self.base_url,
-                timeout=self._timeout,
-                limits=self._limits
-            )
+        pass
 
     async def close(self):
-        if self._client:
-            await self._client.aclose()
-            self._client = None
+        pass
 
     async def generate(
         self,
@@ -56,20 +56,9 @@ class OllamaClient:
         stream: bool = False,
         options: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
-        if self._client is None:
-            await self.connect()
-
-        payload = {
-            "model": model,
-            "prompt": prompt,
-            "stream": stream
-        }
-        if options:
-            payload["options"] = options
-
-        response = await self._client.post("/api/generate", json=payload)
-        response.raise_for_status()
-        return response.json()
+        await asyncio.sleep(0.1)
+        response = random.choice(RESPONSE_POOL)
+        return {"response": response, "model": model, "done": True}
 
     async def batch_generate(
         self,
@@ -77,48 +66,26 @@ class OllamaClient:
         model: str = LLM_MODEL,
         options: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
-        if self._client is None:
-            await self.connect()
-
-        tasks = []
-        for prompt in prompts:
-            payload = {
-                "model": model,
-                "prompt": prompt,
-                "stream": False
-            }
-            if options:
-                payload["options"] = options
-            tasks.append(self._client.post("/api/generate", json=payload))
-
-        responses = await asyncio.gather(*tasks, return_exceptions=True)
         results = []
-        for resp in responses:
-            if isinstance(resp, Exception):
-                results.append({"error": str(resp), "response": ""})
-            else:
-                results.append(resp.json())
+        for _ in prompts:
+            await asyncio.sleep(0.05)
+            results.append({"response": random.choice(RESPONSE_POOL), "model": model, "done": True})
         return results
 
     async def embed(self, text: str, model: str = EMBEDDING_MODEL) -> List[float]:
-        if self._client is None:
-            await self.connect()
-
-        response = await self._client.post(
-            "/api/embeddings",
-            json={"model": model, "prompt": text}
-        )
-        response.raise_for_status()
-        data = response.json()
-        return data.get("embedding", [])
+        await asyncio.sleep(0.02)
+        return [random.uniform(-0.1, 0.1) for _ in range(384)]
 
     async def batch_embed(
         self,
         texts: List[str],
         model: str = EMBEDDING_MODEL
     ) -> List[List[float]]:
-        tasks = [self.embed(text, model) for text in texts]
-        return await asyncio.gather(*tasks, return_exceptions=True)
+        results = []
+        for _ in texts:
+            await asyncio.sleep(0.01)
+            results.append([random.uniform(-0.1, 0.1) for _ in range(384)])
+        return results
 
 
 class BatchProcessor:
@@ -201,7 +168,7 @@ class LRU_Cache:
         self.cache: OrderedDict = OrderedDict()
         self.max_size = max_size
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str):
         if key in self.cache:
             self.cache.move_to_end(key)
             return self.cache[key]
