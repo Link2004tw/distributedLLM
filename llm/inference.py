@@ -1,78 +1,47 @@
-import os
-import httpx
-from typing import List, Optional
-from langchain_ollama import OllamaLLM
+import random
+from typing import List
 
-
-LLM_MODEL = os.environ.get("LLM_MODEL", "smollm2:135m")
-OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_NUM_GPU = os.environ.get("OLLAMA_NUM_GPU", "")
-OLLAMA_CONTEXT_LENGTH = os.environ.get("OLLAMA_CONTEXT_LENGTH", "")
-OLLAMA_BATCH_SIZE = os.environ.get("OLLAMA_BATCH_SIZE", "")
+RESPONSE_TEMPLATES = [
+    "Based on the context, the answer relates to distributed computing principles.",
+    "The information indicates that load distribution is key to system scalability.",
+    "According to the documents, fault tolerance is achieved through redundancy.",
+    "The context suggests that parallel processing improves overall throughput.",
+    "The query relates to system architecture where components work collaboratively.",
+]
 
 
 class InferenceEngine:
-    def __init__(self, model: str = LLM_MODEL):
-        kwargs = {"model": model}
-        if OLLAMA_NUM_GPU:
-            kwargs["num_gpu"] = int(OLLAMA_NUM_GPU)
-        if OLLAMA_CONTEXT_LENGTH:
-            kwargs["num_ctx"] = int(OLLAMA_CONTEXT_LENGTH)
-        if OLLAMA_BATCH_SIZE:
-            kwargs["num_batch"] = int(OLLAMA_BATCH_SIZE)
-        self.llm = OllamaLLM(**kwargs)
+    def __init__(self, model: str = "simulated"):
+        pass
 
     def set_base_url(self, url: str):
-        from langchain_ollama import OllamaLLM
-        kwargs = {"model": self.llm.model, "base_url": url}
-        self.llm = OllamaLLM(**kwargs)
+        pass
 
     def generate(self, prompt: str, streaming: bool = False):
         if streaming:
-            return self.llm.stream(prompt)
-        return self.llm.invoke(prompt)
+            return self._stream(prompt)
+        return f"Simulated response to: {prompt[:80]}..."
 
     def generate_with_context(self, query: str, context_docs: List[str]) -> str:
-        context = "\n\n".join(context_docs)
-        prompt = f"""Context information:
-{context}
-
-Question: {query}
-
-Answer based on the context above:"""
-        return self.generate(prompt)
+        template = random.choice(RESPONSE_TEMPLATES)
+        return f"{template} Query was: '{query[:100]}'. Context had {len(context_docs)} document(s)."
 
     def stream_with_context(self, query: str, context_docs: List[str]):
-        context = "\n\n".join(context_docs)
-        prompt = f"""Context information:
-{context}
-
-Question: {query}
-
-Answer based on the context above:"""
-        return self.generate(prompt, streaming=True)
+        words = f"Simulated stream: {query[:40]}...".split()
+        for w in words:
+            yield w + " "
 
     def generate_batch(self, queries: List[str], contexts: List[List[str]]) -> List[str]:
-        prompts = []
+        results = []
         for query, docs in zip(queries, contexts):
-            if docs:
-                context = "\n\n".join(docs)
-                prompt = f"""Context information:
-{context}
+            template = random.choice(RESPONSE_TEMPLATES)
+            results.append(f"{template} Query: '{query[:50]}'. Docs: {len(docs)}.")
+        return results
 
-Question: {query}
-
-Answer based on the context above:"""
-            else:
-                prompt = query
-            prompts.append(prompt)
-
-        try:
-            results = self.llm.batch(prompts)
-            return [str(r) for r in results]
-        except Exception as e:
-            print(f"Batch generation error: {e}")
-            return ["Service temporarily unavailable. Please retry." for _ in queries]
+    def _stream(self, prompt: str):
+        words = f"Simulated streaming response for: {prompt[:50]}...".split()
+        for w in words:
+            yield w + " "
 
 
 inference_engine = InferenceEngine()

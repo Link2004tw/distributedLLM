@@ -3,13 +3,19 @@ import time
 import uuid
 import asyncio
 import subprocess
+import logging
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import List, Optional, AsyncIterator
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import httpx
+
+load_dotenv()
+
+logging.basicConfig(level=logging.INFO)
 
 from rag.retriever import Retriever, retriever
 from llm.inference import InferenceEngine, inference_engine
@@ -461,6 +467,8 @@ async def health_check():
     gpu_info = get_gpu_info()
     queue_available = BACKPRESSURE_QUEUE_SIZE - active_connections
     return {
+        "status": "ok",
+        "role": "worker",
         "worker_id": WORKER_ID,
         "healthy": True,
         "active_connections": active_connections,
