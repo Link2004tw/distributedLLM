@@ -208,6 +208,9 @@ class TestAutomaticTaskReassignment:
 
         response = client.post(f"{lb_url}/query", json=sample_query)
         assert response.status_code in [200, 503]
+
+        for wid, port in [("worker-2", 8002), ("worker-3", 8003), ("worker-4", 8004)]:
+            client.post(f"{lb_url}/workers/add", json={"worker_id": wid, "host": "localhost", "port": port})
         client.close()
 
         for wid, port in [("worker-2", 8002), ("worker-3", 8003), ("worker-4", 8004)]:
