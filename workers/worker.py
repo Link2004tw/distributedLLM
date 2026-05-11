@@ -46,11 +46,12 @@ def process_request_sync(query: str, top_k: int) -> dict:
     docs = retriever.retrieve(query, top_k=top_k)
     answer = inference_engine.generate_with_context(query, docs)
 
-    latency = (time.time() - start_time) * 1000
+    latency_ms = (time.time() - start_time) * 1000
+
     return {
         "answer": answer,
         "sources": docs,
-        "latency_ms": latency,
+        "latency_ms": latency_ms,
     }
 
 
