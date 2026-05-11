@@ -7,7 +7,8 @@ from langchain_ollama import OllamaEmbeddings
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text:latest")
 CHROMA_DB_PATH = os.environ.get("CHROMA_DB_PATH", "./chroma_db")
 COLLECTION_NAME = "documents"
-CACHE_SIZE = int(os.environ.get("RETRIEVER_CACHE_SIZE", "128"))
+CACHE_SIZE = int(os.environ.get("RETRIEVER_CACHE_SIZE", "1024"))
+EMBEDDING_CACHE_SIZE = int(os.environ.get("EMBEDDING_CACHE_SIZE", "1024"))
 
 
 class LRUCache:
@@ -44,12 +45,28 @@ class Retriever:
             collection_name=COLLECTION_NAME,
         )
         self._cache = LRUCache(CACHE_SIZE)
+        self._embed_cache: Dict[str, List[float]] = {}
+        self._embed_order: List[str] = []
+
+    def _get_embedding(self, query: str) -> List[float]:
+        if query in self._embed_cache:
+            self._embed_order.remove(query)
+            self._embed_order.append(query)
+            return self._embed_cache[query]
+        vec = self.embeddings.embed_query(query)
+        if len(self._embed_cache) >= EMBEDDING_CACHE_SIZE:
+            oldest = self._embed_order.pop(0)
+            del self._embed_cache[oldest]
+        self._embed_cache[query] = vec
+        self._embed_order.append(query)
+        return vec
 
     def retrieve(self, query: str, top_k: int = 3) -> List[str]:
         cached = self._cache.get(query)
         if cached is not None:
             return cached
-        docs = self.db.similarity_search(query, k=top_k)
+        vec = self._get_embedding(query)
+        docs = self.db.similarity_search_by_vector(vec, k=top_k)
         result = [doc.page_content for doc in docs]
         self._cache.put(query, result)
         return result
