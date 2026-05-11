@@ -2,10 +2,11 @@ import os
 import asyncio
 import time
 import json
+from collections import deque
 import httpx
 from pathlib import Path
 from typing import Dict, List, Optional, Set
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from enum import Enum
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -75,6 +76,11 @@ pending_requests: List[FailedRequest] = []
 MAX_REASSIGN_ATTEMPTS = 5
 MAX_CONCURRENT_REQUESTS = 1000
 request_semaphore: Optional[asyncio.Semaphore] = None
+USE_MASTER_SCHEDULING = os.environ.get("USE_MASTER_SCHEDULING", "1") == "1"
+
+_schedule_cache: dict = {}
+_schedule_cache_time: float = 0
+SCHEDULE_CACHE_TTL = 0.5
 
 PERSISTENCE_FILE = Path(os.environ.get("PENDING_REQUESTS_FILE", "./pending_requests.json"))
 
@@ -187,8 +193,38 @@ def get_healthy_workers() -> List[WorkerState]:
     return [w for w in workers.values() if w.healthy]
 
 
-def select_round_robin() -> Optional[WorkerState]:
-    healthy = get_healthy_workers()
+async def select_from_master(exclude: Set[str] = None) -> Optional[WorkerState]:
+    global _schedule_cache, _schedule_cache_time
+
+    now = time.time()
+    if now - _schedule_cache_time < SCHEDULE_CACHE_TTL and _schedule_cache:
+        cached = _schedule_cache
+    else:
+        try:
+            resp = await httpx_client.post(
+                f"{MASTER_URL}/schedule",
+                json={
+                    "strategy": current_strategy.value,
+                    "exclude_workers": list(exclude or []),
+                },
+                timeout=5.0
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                _schedule_cache = data
+                _schedule_cache_time = now
+        except Exception:
+            pass
+
+    if _schedule_cache:
+        wid = _schedule_cache.get("worker_id")
+        if wid and wid in workers:
+            return workers[wid]
+    return None
+
+
+def select_round_robin(exclude: Set[str] = None) -> Optional[WorkerState]:
+    healthy = [w for w in get_healthy_workers() if not exclude or w.worker_id not in exclude]
     if not healthy:
         return None
     idx = routing_state.round_robin_index % len(healthy)
@@ -196,76 +232,72 @@ def select_round_robin() -> Optional[WorkerState]:
     return healthy[idx]
 
 
-def select_least_connections() -> Optional[WorkerState]:
-    healthy = get_healthy_workers()
+def select_least_connections(exclude: Set[str] = None) -> Optional[WorkerState]:
+    healthy = [w for w in get_healthy_workers() if not exclude or w.worker_id not in exclude]
     if not healthy:
         return None
     return min(healthy, key=lambda w: w.active_connections)
 
 
-def select_hybrid() -> Optional[WorkerState]:
-    healthy = get_healthy_workers()
+def select_hybrid(exclude: Set[str] = None) -> Optional[WorkerState]:
+    healthy = [w for w in get_healthy_workers() if not exclude or w.worker_id not in exclude]
     if not healthy:
         return None
-
     min_connections = min(w.active_connections for w in healthy)
     least_busy = [w for w in healthy if w.active_connections == min_connections]
-
     if len(least_busy) == 1:
         return least_busy[0]
-
     idx = routing_state.hybrid_rr_index % len(least_busy)
     routing_state.hybrid_rr_index += 1
     return least_busy[idx]
 
 
-def select_gpu_aware() -> Optional[WorkerState]:
-    healthy = get_healthy_workers()
+def select_gpu_aware(exclude: Set[str] = None) -> Optional[WorkerState]:
+    healthy = [w for w in get_healthy_workers() if not exclude or w.worker_id not in exclude]
     if not healthy:
         return None
-
-    def gpu_score(w: WorkerState) -> float:
+    def gpu_score(w):
         util = w.gpu_utilization
         mem = w.gpu_memory_mb
         conn = w.active_connections
         queue = max(1, w.queue_available)
-
         mem_ratio = mem / max(w.gpu_memory_mb, 1)
         conn_factor = conn * 10
         queue_factor = (100 - queue) * 2
-
         return util + (mem_ratio * 50) + conn_factor + queue_factor
-
     return min(healthy, key=gpu_score)
 
 
-def select_load_aware() -> Optional[WorkerState]:
-    healthy = get_healthy_workers()
+def select_load_aware(exclude: Set[str] = None) -> Optional[WorkerState]:
+    healthy = [w for w in get_healthy_workers() if not exclude or w.worker_id not in exclude]
     if not healthy:
         return None
-
-    def load_score(w: WorkerState) -> float:
+    def load_score(w):
         conn_score = w.active_connections * 30
         latency_score = w.avg_latency_ms * 10
         queue_penalty = max(0, 50 - w.queue_available) * 5
         gpu_penalty = w.gpu_utilization * 5
         return conn_score + latency_score + queue_penalty + gpu_penalty
-
     return min(healthy, key=load_score)
 
 
-def select_worker() -> Optional[WorkerState]:
+async def select_worker(exclude: Set[str] = None) -> Optional[WorkerState]:
+    if USE_MASTER_SCHEDULING:
+        master_choice = await select_from_master(exclude)
+        if master_choice:
+            return master_choice
+
     if current_strategy == RoutingStrategy.ROUND_ROBIN:
-        return select_round_robin()
+        return select_round_robin(exclude)
     elif current_strategy == RoutingStrategy.LEAST_CONNECTIONS:
-        return select_least_connections()
+        return select_least_connections(exclude)
     elif current_strategy == RoutingStrategy.LOAD_AWARE:
-        return select_load_aware()
+        return select_load_aware(exclude)
     elif current_strategy == RoutingStrategy.GPU_AWARE:
-        return select_gpu_aware()
+        return select_gpu_aware(exclude)
     elif current_strategy == RoutingStrategy.HYBRID:
-        return select_hybrid()
-    return select_round_robin()
+        return select_hybrid(exclude)
+    return select_round_robin(exclude)
 
 
 def mark_worker_unhealthy(worker_id: str):
@@ -278,39 +310,16 @@ async def reassign_pending_requests():
     global pending_requests
     if not pending_requests:
         return
-
     still_pending = []
     for req in pending_requests:
         healthy = [w for w in workers.values() if w.healthy and w.worker_id not in req.failed_workers]
         if not healthy:
             still_pending.append(req)
             continue
-
-        if current_strategy == RoutingStrategy.ROUND_ROBIN:
-            idx = routing_state.round_robin_index % len(healthy)
-            routing_state.round_robin_index += 1
-            worker = healthy[idx]
-        elif current_strategy == RoutingStrategy.LEAST_CONNECTIONS:
-            worker = min(healthy, key=lambda w: w.active_connections)
-        elif current_strategy == RoutingStrategy.HYBRID:
-            min_conn = min(w.active_connections for w in healthy)
-            least_busy = [w for w in healthy if w.active_connections == min_conn]
-            idx = routing_state.hybrid_rr_index % len(least_busy)
-            routing_state.hybrid_rr_index += 1
-            worker = least_busy[idx]
-        elif current_strategy == RoutingStrategy.GPU_AWARE:
-            def gpu_score(w: WorkerState) -> float:
-                util = w.gpu_utilization
-                mem = w.gpu_memory_mb
-                conn = w.active_connections
-                mem_ratio = mem / max(w.gpu_memory_mb, 1)
-                return util + (mem_ratio * 50) + (conn * 10)
-            worker = min(healthy, key=gpu_score)
-        elif current_strategy == RoutingStrategy.LOAD_AWARE:
-            worker = min(healthy, key=lambda w: w.active_connections * 30 + w.avg_latency_ms * 10 + max(0, 50 - w.queue_available) * 5 + w.gpu_utilization * 5)
-        else:
-            worker = healthy[0]
-
+        worker = await select_worker(req.failed_workers)
+        if not worker:
+            still_pending.append(req)
+            continue
         try:
             resp = await httpx_client.post(
                 f"{worker.url}/query",
@@ -322,12 +331,10 @@ async def reassign_pending_requests():
                 continue
         except Exception:
             pass
-
         req.attempts += 1
         req.failed_workers.add(worker.worker_id)
         if req.attempts < MAX_REASSIGN_ATTEMPTS:
             still_pending.append(req)
-
     pending_requests = still_pending
     save_pending_requests()
 
@@ -368,36 +375,13 @@ async def forward_to_worker(worker: WorkerState, query: str, top_k: int, exclude
 
     healthy = [w for w in workers.values() if w.healthy and w.worker_id not in exclude_set]
     if healthy:
-        if current_strategy == RoutingStrategy.ROUND_ROBIN:
-            idx = routing_state.round_robin_index % len(healthy)
-            routing_state.round_robin_index += 1
-            alt_worker = healthy[idx]
-        elif current_strategy == RoutingStrategy.LEAST_CONNECTIONS:
-            alt_worker = min(healthy, key=lambda w: w.active_connections)
-        elif current_strategy == RoutingStrategy.HYBRID:
-            min_conn = min(w.active_connections for w in healthy)
-            least_busy = [w for w in healthy if w.active_connections == min_conn]
-            idx = routing_state.hybrid_rr_index % len(least_busy)
-            routing_state.hybrid_rr_index += 1
-            alt_worker = least_busy[idx]
-        elif current_strategy == RoutingStrategy.GPU_AWARE:
-            def gpu_score(w: WorkerState) -> float:
-                util = w.gpu_utilization
-                mem = w.gpu_memory_mb
-                conn = w.active_connections
-                mem_ratio = mem / max(w.gpu_memory_mb, 1)
-                return util + (mem_ratio * 50) + (conn * 10)
-            alt_worker = min(healthy, key=gpu_score)
-        elif current_strategy == RoutingStrategy.LOAD_AWARE:
-            alt_worker = min(healthy, key=lambda w: w.active_connections * 30 + w.avg_latency_ms * 10 + max(0, 50 - w.queue_available) * 5 + w.gpu_utilization * 5)
-        else:
-            alt_worker = healthy[0]
-
-        exclude_set.add(worker.worker_id)
-        try:
-            return await forward_to_worker(alt_worker, query, top_k, exclude_set)
-        except Exception:
-            pass
+        alt_worker = await select_worker(exclude_set)
+        if alt_worker:
+            exclude_set.add(worker.worker_id)
+            try:
+                return await forward_to_worker(alt_worker, query, top_k, exclude_set)
+            except Exception:
+                pass
 
     pending_requests.append(FailedRequest(query=query, top_k=top_k, attempts=1, failed_workers=exclude_set))
     save_pending_requests()
@@ -411,9 +395,7 @@ async def startup():
     global request_semaphore
     await init_httpx()
     request_semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
-
     load_pending_requests()
-
     default_workers = [
         ("worker-1", "localhost", 8001),
         ("worker-2", "localhost", 8002),
@@ -427,7 +409,6 @@ async def startup():
             port=port,
             url=f"http://{host}:{port}"
         )
-
     asyncio.create_task(health_check_loop())
     asyncio.create_task(pending_retry_loop())
 
@@ -443,24 +424,19 @@ async def handle_query(request: QueryRequest):
     import time
     routing_state.total_requests += 1
     start_time = time.time()
-
-    worker = select_worker()
+    worker = await select_worker()
     if not worker:
         routing_state.failed_requests += 1
         raise HTTPException(status_code=503, detail="No healthy workers available")
-
     try:
         async with request_semaphore:
             result = await forward_to_worker(worker, request.query, request.top_k)
-
         latency_ms = (time.time() - start_time) * 1000
         routing_state.request_latencies.append(latency_ms)
         routing_state.successful_requests += 1
-
         if worker.worker_id not in routing_state.per_worker_throughput:
             routing_state.per_worker_throughput[worker.worker_id] = 0
         routing_state.per_worker_throughput[worker.worker_id] += 1
-
         worker.active_connections = max(0, worker.active_connections - 1)
         return result
     except Exception as e:
@@ -515,16 +491,15 @@ async def get_strategy():
 
 @app.post("/strategy")
 async def set_strategy(request: StrategyRequest):
-    global current_strategy
+    global current_strategy, _schedule_cache, _schedule_cache_time
     try:
         current_strategy = RoutingStrategy(request.strategy.lower())
+        _schedule_cache = {}
+        _schedule_cache_time = 0
         return {"status": "ok", "strategy": current_strategy.value}
     except ValueError:
         valid = [s.value for s in RoutingStrategy]
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid strategy. Valid: {valid}"
-        )
+        raise HTTPException(status_code=400, detail=f"Invalid strategy. Valid: {valid}")
 
 
 def calculate_percentile(values: List[float], percentile: float) -> float:
@@ -540,7 +515,6 @@ def calculate_percentile(values: List[float], percentile: float) -> float:
 async def get_stats():
     healthy = get_healthy_workers()
     latencies = list(routing_state.request_latencies)
-
     return {
         "total_workers": len(workers),
         "healthy_workers": len(healthy),
@@ -565,6 +539,7 @@ async def get_stats():
             "p99_ms": calculate_percentile(latencies, 99),
         },
         "per_worker_throughput": dict(routing_state.per_worker_throughput),
+        "master_scheduling": USE_MASTER_SCHEDULING,
     }
 
 
@@ -598,10 +573,8 @@ async def add_worker(data: dict):
     worker_id = data.get("worker_id")
     host = data.get("host", "localhost")
     port = data.get("port")
-
     if not worker_id or not port:
         raise HTTPException(status_code=400, detail="worker_id and port required")
-
     workers[worker_id] = WorkerState(
         worker_id=worker_id,
         host=host,

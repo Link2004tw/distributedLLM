@@ -1,6 +1,6 @@
 import asyncio
 import time
-from typing import Dict, Set
+from typing import Dict, List, Optional, Set
 from fastapi import FastAPI, HTTPException
 import httpx
 
@@ -19,6 +19,10 @@ HEARTBEAT_INTERVAL = 5
 FAILURE_THRESHOLD = 3
 LOAD_BALANCER_URL = "http://localhost:8000"
 
+# Routing state
+_rr_index = 0
+_hybrid_rr_index = 0
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -35,7 +39,8 @@ async def register_worker(worker_id: str, port: int, host: str = "localhost"):
         avg_latency_ms=0.0,
         last_heartbeat=time.time(),
     )
-    asyncio.create_task(notify_load_balancer_worker_added(worker_id, host, port))
+    if host == "localhost" or host == "127.0.0.1":
+        asyncio.create_task(notify_load_balancer_worker_added(worker_id, host, port))
 
 
 async def heartbeat_monitor():
@@ -136,3 +141,91 @@ async def remove_worker(worker_id: str):
         del REGISTERED_WORKERS[worker_id]
         return {"status": "removed"}
     raise HTTPException(status_code=404, detail="Worker not found")
+
+
+def get_healthy_workers() -> List[WorkerInfo]:
+    return [w for w in REGISTERED_WORKERS.values() if w.healthy]
+
+
+def select_round_robin(exclude: Set[str] = None) -> Optional[WorkerInfo]:
+    global _rr_index
+    healthy = [w for w in get_healthy_workers() if not exclude or w.worker_id not in exclude]
+    if not healthy:
+        return None
+    idx = _rr_index % len(healthy)
+    _rr_index += 1
+    return healthy[idx]
+
+
+def select_least_connections(exclude: Set[str] = None) -> Optional[WorkerInfo]:
+    healthy = [w for w in get_healthy_workers() if not exclude or w.worker_id not in exclude]
+    if not healthy:
+        return None
+    return min(healthy, key=lambda w: w.active_connections)
+
+
+def select_hybrid(exclude: Set[str] = None) -> Optional[WorkerInfo]:
+    global _hybrid_rr_index
+    healthy = [w for w in get_healthy_workers() if not exclude or w.worker_id not in exclude]
+    if not healthy:
+        return None
+    min_conn = min(w.active_connections for w in healthy)
+    least_busy = [w for w in healthy if w.active_connections == min_conn]
+    if len(least_busy) == 1:
+        return least_busy[0]
+    idx = _hybrid_rr_index % len(least_busy)
+    _hybrid_rr_index += 1
+    return least_busy[idx]
+
+
+def select_load_aware(exclude: Set[str] = None) -> Optional[WorkerInfo]:
+    healthy = [w for w in get_healthy_workers() if not exclude or w.worker_id not in exclude]
+    if not healthy:
+        return None
+    def score(w):
+        return w.active_connections * 30 + w.avg_latency_ms * 10
+    return min(healthy, key=score)
+
+
+def select_gpu_aware(exclude: Set[str] = None) -> Optional[WorkerInfo]:
+    healthy = [w for w in get_healthy_workers() if not exclude or w.worker_id not in exclude]
+    if not healthy:
+        return None
+    def score(w):
+        return w.active_connections * 10 + w.avg_latency_ms * 5
+    return min(healthy, key=score)
+
+
+def select_worker(strategy: str = "round_robin", exclude: Set[str] = None) -> Optional[WorkerInfo]:
+    if strategy == "least_connections":
+        return select_least_connections(exclude)
+    elif strategy == "load_aware":
+        return select_load_aware(exclude)
+    elif strategy == "gpu_aware":
+        return select_gpu_aware(exclude)
+    elif strategy == "hybrid":
+        return select_hybrid(exclude)
+    return select_round_robin(exclude)
+
+
+@app.post("/schedule")
+async def schedule(data: dict):
+    strategy = data.get("strategy", "round_robin")
+    exclude = set(data.get("exclude_workers", []))
+    worker = select_worker(strategy, exclude)
+    if not worker:
+        raise HTTPException(status_code=503, detail="No healthy workers available")
+    return {
+        "worker_id": worker.worker_id,
+        "host": worker.host,
+        "port": worker.port,
+        "url": f"http://{worker.host}:{worker.port}",
+    }
+
+
+@app.post("/routing/reset")
+async def reset_routing():
+    global _rr_index, _hybrid_rr_index
+    _rr_index = 0
+    _hybrid_rr_index = 0
+    return {"status": "reset"}

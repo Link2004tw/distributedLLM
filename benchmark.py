@@ -5,6 +5,7 @@ import json
 import argparse
 import subprocess
 import datetime
+import shutil
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -48,18 +49,55 @@ def setup_nginx():
     return True
 
 
-def start_nginx():
-    conf_src = ROOT / "lb" / "nginx.conf"
-    conf_dst = Path("/etc/nginx/nginx.conf")
+def generate_lb_nginx_config(upstream_host: str = "127.0.0.1", upstream_port: int = 8080) -> str:
+    return f"""worker_processes auto;
 
-    import shutil
-    shutil.copy2(str(conf_src), str(conf_dst))
+events {{
+    worker_connections 8192;
+    multi_accept on;
+    use epoll;
+}}
 
+http {{
+    server {{
+        listen 8000 backlog=4096;
+        server_name localhost;
+
+        location /query {{
+            proxy_pass http://{upstream_host}:{upstream_port}/query;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_read_timeout 3600s;
+            proxy_connect_timeout 30s;
+            proxy_next_upstream error timeout invalid_header http_500 http_502 http_503;
+            proxy_next_upstream_tries 5;
+            proxy_ignore_client_abort on;
+        }}
+
+        location /health {{
+            return 200 "OK\\n";
+        }}
+
+        location /nginx_status {{
+            stub_status;
+            allow 127.0.0.1;
+            deny all;
+        }}
+    }}
+}}
+"""
+
+
+def start_nginx(lb_host: str = "127.0.0.1", lb_port: int = 8080):
+    conf_content = generate_lb_nginx_config(lb_host, lb_port)
+    tmp_conf = Path("/tmp/nginx-benchmark.conf")
+    tmp_conf.write_text(conf_content)
+    shutil.copy2(str(tmp_conf), "/etc/nginx/nginx.conf")
     subprocess.run(["pkill", "-f", "nginx"], capture_output=True)
     time.sleep(1)
     subprocess.Popen(["nginx"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(2)
-    log("NGINX started on port 8000")
+    log(f"NGINX started on port 8000 (upstream: {lb_host}:{lb_port})")
     return True
 
 
@@ -75,7 +113,6 @@ def start_component(name: str, module: str, port: int, env: dict = None):
     merged["PORT"] = str(port)
     if name.startswith("worker"):
         merged["WORKER_ID"] = name
-
     p = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", f"{module}:app",
          "--port", str(port), "--log-level", "warning"],
@@ -299,7 +336,8 @@ def run_single_benchmark(label: str, workers: int, model: str,
                          ollama_num_gpu: str = "",
                          ollama_ctx: str = "",
                          ollama_batch: str = "",
-                         embedding_model: str = "nomic-embed-text:latest"):
+                         embedding_model: str = "nomic-embed-text:latest",
+                         worker_host: str = "localhost"):
     log(f"\n{'='*60}")
     log(f"BENCHMARK: {label}")
     log(f"  workers={workers}, model={model}, concurrency={concurrency}")
@@ -307,23 +345,9 @@ def run_single_benchmark(label: str, workers: int, model: str,
     log(f"{'='*60}")
 
     procs = []
+    lb_port = 8080
 
     try:
-        nginx_conf_path = ROOT / "lb" / "nginx.conf"
-        if nginx_conf_path.exists():
-            content = nginx_conf_path.read_text()
-            if nginx_strategy == "least_connections":
-                content = content.replace("# least_conn;", "least_conn;")
-                if "least_conn;" not in content:
-                    content = content.replace("server localhost", "least_conn;\n        server localhost")
-            else:
-                content = content.replace("least_conn;", "# least_conn;")
-            nginx_conf_path.write_text(content)
-            import shutil
-            shutil.copy2(str(nginx_conf_path), "/etc/nginx/nginx.conf")
-            subprocess.run(["nginx", "-s", "reload"], capture_output=True, timeout=10)
-        log(f"NGINX strategy: {nginx_strategy}")
-
         log("Starting master...")
         p = start_component("master", "master.monitor", 9000)
         procs.append(p)
@@ -342,6 +366,7 @@ def run_single_benchmark(label: str, workers: int, model: str,
                 "MAX_CONCURRENT_TASKS": str(max(10, concurrency)),
                 "BACKPRESSURE_QUEUE_SIZE": str(max(50, concurrency * 3)),
                 "CACHE_SIZE": "500",
+                "WORKER_HOST": worker_host,
             }
             if ollama_num_gpu:
                 env["OLLAMA_NUM_GPU"] = ollama_num_gpu
@@ -354,6 +379,30 @@ def run_single_benchmark(label: str, workers: int, model: str,
             if not wait_for_worker_ready(f"http://127.0.0.1:{port}"):
                 log(f"FAIL: {wid} not ready (model load error)")
                 return None
+
+        log("Starting load balancer with master scheduling...")
+        p = start_component("lb", "lb.load_balancer", lb_port, env={
+            "MASTER_NODE_URL": "http://localhost:9000",
+            "LB_PORT": str(lb_port),
+            "USE_MASTER_SCHEDULING": "1",
+        })
+        procs.append(p)
+        if not wait_for_ready(f"http://127.0.0.1:{lb_port}/health"):
+            log("FAIL: load balancer did not start")
+            return None
+
+        log("Configuring NGINX to proxy through load balancer...")
+        start_nginx("127.0.0.1", lb_port)
+
+        log(f"Setting LB strategy to {nginx_strategy}...")
+        try:
+            import httpx
+            httpx.post(f"http://127.0.0.1:{lb_port}/strategy",
+                       json={"strategy": nginx_strategy}, timeout=5)
+        except Exception as e:
+            log(f"Warning: could not set strategy: {e}")
+
+        log(f"NGINX strategy: {nginx_strategy} (via LB + Master scheduling)")
 
         log("All workers ready. Running load test...")
         load_timeout = 3600.0
@@ -376,11 +425,156 @@ def run_single_benchmark(label: str, workers: int, model: str,
             "ollama_ctx": ollama_ctx,
             "ollama_batch": ollama_batch,
             "embedding_model": embedding_model,
+            "worker_host": worker_host,
+            "lb_master_scheduling": True,
         }
         return result
 
     finally:
         log("Cleaning up...")
+        for p in procs:
+            p.terminate()
+            try:
+                p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                p.kill()
+        time.sleep(1)
+
+
+def run_fault_test(args):
+    label = "fault-tolerance-test"
+    workers = args.workers or 4
+    model = args.model or "smollm2:135m"
+    concurrency = args.concurrency or 10
+    requests = args.requests or 100
+    worker_host = args.host or "localhost"
+    lb_port = 8080
+
+    log(f"\n{'='*60}")
+    log(f"FAULT TOLERANCE TEST")
+    log(f"  workers={workers}, model={model}, concurrency={concurrency}")
+    log(f"{'='*60}")
+
+    procs = []
+
+    try:
+        log("Starting master...")
+        p = start_component("master", "master.monitor", 9000)
+        procs.append(p)
+        wait_for_ready("http://127.0.0.1:9000/health")
+
+        for i in range(1, workers + 1):
+            port = 8000 + i
+            wid = f"worker-{i}"
+            env = {
+                "LLM_MODEL": model,
+                "EMBEDDING_MODEL": args.embedding_model,
+                "WORKER_ID": wid,
+                "MAX_CONCURRENT_TASKS": str(max(10, concurrency)),
+                "BACKPRESSURE_QUEUE_SIZE": str(max(50, concurrency * 3)),
+                "CACHE_SIZE": "500",
+                "WORKER_HOST": worker_host,
+            }
+            p = start_component(wid, "workers.worker", port, env=env)
+            procs.append(p)
+            log(f"  {wid} started on port {port}")
+
+        for i in range(1, workers + 1):
+            wait_for_worker_ready(f"http://127.0.0.1:{8000 + i}")
+
+        log("Starting load balancer...")
+        p = start_component("lb", "lb.load_balancer", lb_port, env={
+            "MASTER_NODE_URL": "http://localhost:9000",
+            "LB_PORT": str(lb_port),
+            "USE_MASTER_SCHEDULING": "1",
+        })
+        procs.append(p)
+        wait_for_ready(f"http://127.0.0.1:{lb_port}/health")
+
+        log("Starting NGINX...")
+        start_nginx("127.0.0.1", lb_port)
+
+        log("\n--- Phase 1: Baseline (all workers healthy) ---")
+        baseline = run_load_test(requests // 4, concurrency, timeout_s=300.0)
+        log(f"  Baseline success: {baseline['success']}/{baseline['total']}  ({baseline['error_rate']:.1f}%)")
+
+        log("\n--- Phase 2: Kill worker-3 ---")
+        worker_procs = [p for i, p in enumerate(procs) if i > 0 and i <= workers]
+        killed_idx = min(2, len(worker_procs) - 1)
+        killed_pid = worker_procs[killed_idx].pid
+        log(f"  Killing worker PID {killed_pid}...")
+        worker_procs[killed_idx].terminate()
+        try:
+            worker_procs[killed_idx].wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            worker_procs[killed_idx].kill()
+        time.sleep(3)
+
+        log("\n--- Phase 3: Load test with failed worker ---")
+        failover = run_load_test(requests // 2, concurrency, timeout_s=300.0)
+        log(f"  Failover success: {failover['success']}/{failover['total']}  ({failover['error_rate']:.1f}%)")
+
+        log("\n--- Phase 4: Verify worker marked unhealthy ---")
+        import httpx
+        try:
+            r = httpx.get("http://127.0.0.1:9000/workers", timeout=5)
+            registered = r.json().get("workers", [])
+            for w in registered:
+                status = "HEALTHY" if w.get("healthy") else "UNHEALTHY"
+                log(f"  {w['worker_id']}: {status}")
+
+            r = httpx.get(f"http://127.0.0.1:{lb_port}/workers", timeout=5)
+            lb_workers = r.json().get("workers", [])
+            for w in lb_workers:
+                status = "HEALTHY" if w.get("healthy") else "UNHEALTHY"
+                log(f"  LB {w['worker_id']}: {status}")
+        except Exception as e:
+            log(f"  Could not verify worker status: {e}")
+
+        log("\n--- Phase 5: Restart worker ---")
+        killed_port = 8000 + killed_idx + 1
+        wid = f"worker-{killed_idx + 1}"
+        env = {
+            "LLM_MODEL": model,
+            "EMBEDDING_MODEL": args.embedding_model,
+            "WORKER_ID": wid,
+            "MAX_CONCURRENT_TASKS": str(max(10, concurrency)),
+            "BACKPRESSURE_QUEUE_SIZE": str(max(50, concurrency * 3)),
+            "CACHE_SIZE": "500",
+            "WORKER_HOST": worker_host,
+        }
+        p = start_component(wid, "workers.worker", killed_port, env=env)
+        procs.append(p)
+        wait_for_worker_ready(f"http://127.0.0.1:{killed_port}")
+        time.sleep(2)
+
+        log("\n--- Phase 6: Verify recovery ---")
+        recovery = run_load_test(requests // 4, concurrency, timeout_s=300.0)
+        log(f"  Recovery success: {recovery['success']}/{recovery['total']}  ({recovery['error_rate']:.1f}%)")
+
+        summary = {
+            "label": label,
+            "baseline_success_rate": round(100 - baseline['error_rate'], 1),
+            "failover_success_rate": round(100 - failover['error_rate'], 1),
+            "recovery_success_rate": round(100 - recovery['error_rate'], 1),
+            "fault_tolerance_working": failover['success'] > 0,
+            "recovery_working": recovery['success'] > 0,
+        }
+        log(f"\n{'='*60}")
+        log("FAULT TOLERANCE TEST RESULTS")
+        log(f"{'='*60}")
+        log(f"  Baseline:  {baseline['success']}/{baseline['total']} success")
+        log(f"  Failover:  {failover['success']}/{failover['total']} success  (worker killed)")
+        log(f"  Recovery:  {recovery['success']}/{recovery['total']} success  (worker restarted)")
+        log(f"  System survived failure: {'PASS' if summary['fault_tolerance_working'] else 'FAIL'}")
+        log(f"  System recovered:        {'PASS' if summary['recovery_working'] else 'FAIL'}")
+
+        out = ROOT / "fault_test_result.json"
+        out.write_text(json.dumps(summary, indent=2))
+        log(f"Result saved to {out}")
+
+    finally:
+        log("\nCleaning up...")
         for p in procs:
             p.terminate()
             try:
@@ -437,6 +631,7 @@ def run_benchmark_suite(args):
                     ollama_ctx=args.ctx,
                     ollama_batch=args.batch,
                     embedding_model=args.embedding_model,
+                    worker_host=args.host,
                 )
                 if r:
                     results.append(r)
@@ -454,6 +649,7 @@ def run_benchmark_suite(args):
                     ollama_ctx=args.ctx,
                     ollama_batch=args.batch,
                     embedding_model=args.embedding_model,
+                    worker_host=args.host,
                 )
                 if r:
                     results.append(r)
@@ -522,6 +718,11 @@ def main():
                         help="Embedding model (default: nomic-embed-text:latest)")
     parser.add_argument("--single", action="store_true",
                         help="Run a single quick test and exit")
+    parser.add_argument("--fault-test", action="store_true",
+                        help="Run fault tolerance test (kill worker mid-benchmark)")
+    parser.add_argument("--host", type=str, default="localhost",
+                        help="Worker host for multi-node deployment (default: localhost)")
+
     args = parser.parse_args()
 
     target = args.model or "smollm2:135m"
@@ -531,31 +732,30 @@ def main():
     if not setup_nginx():
         sys.exit(1)
 
-    if not start_nginx():
-        sys.exit(1)
+    if args.fault_test:
+        run_fault_test(args)
+        return
 
-    try:
-        if args.single:
-            r = run_single_benchmark(
-                label="single-test",
-                workers=args.workers or 2,
-                model=args.model or "smollm2:135m",
-                requests=args.requests,
-                concurrency=args.concurrency or 10,
-                ollama_num_gpu=args.num_gpu,
-                ollama_ctx=args.ctx,
-                ollama_batch=args.batch,
-                embedding_model=args.embedding_model,
-            )
-            if r:
-                _print_result(r)
-                out = ROOT / "benchmark_result_latest.json"
-                out.write_text(json.dumps(r, indent=2))
-                log(f"Result saved to {out}")
-        else:
-            run_benchmark_suite(args)
-    finally:
-        stop_nginx()
+    if args.single:
+        r = run_single_benchmark(
+            label="single-test",
+            workers=args.workers or 2,
+            model=args.model or "smollm2:135m",
+            requests=args.requests,
+            concurrency=args.concurrency or 10,
+            ollama_num_gpu=args.num_gpu,
+            ollama_ctx=args.ctx,
+            ollama_batch=args.batch,
+            embedding_model=args.embedding_model,
+            worker_host=args.host,
+        )
+        if r:
+            _print_result(r)
+            out = ROOT / "benchmark_result_latest.json"
+            out.write_text(json.dumps(r, indent=2))
+            log(f"Result saved to {out}")
+    else:
+        run_benchmark_suite(args)
 
 
 if __name__ == "__main__":
