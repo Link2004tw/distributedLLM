@@ -7,6 +7,7 @@ from typing import List
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import httpx
+import asyncio
 from asyncio import Queue
 
 from rag.retriever import retriever
@@ -127,6 +128,14 @@ async def process_request_async(query: str, top_k: int, request_id: str) -> dict
 async def startup_event():
     global query_queue
     query_queue = Queue(maxsize=MAX_QUEUE_SIZE)
+
+    print(f"[{WORKER_ID}] Warming up inference engine...")
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, lambda: inference_engine.generate("ping"))
+        print(f"[{WORKER_ID}] Warmup complete")
+    except Exception as e:
+        print(f"[{WORKER_ID}] Warmup failed: {e}")
 
 
 @app.post("/query")

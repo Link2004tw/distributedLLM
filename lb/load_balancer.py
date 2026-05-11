@@ -145,11 +145,17 @@ def select_gpu_aware() -> Optional[WorkerState]:
     if not healthy:
         return None
 
-    available = [w for w in healthy if w.gpu_memory_mb < 5000 and w.gpu_utilization < 80]
-    if available:
-        return available[0]
+    def gpu_score(w: WorkerState) -> float:
+        util = w.gpu_utilization
+        mem = w.gpu_memory_mb
+        conn = w.active_connections
 
-    return min(healthy, key=lambda w: (w.gpu_utilization, w.gpu_memory_mb))
+        mem_ratio = mem / max(w.gpu_memory_mb, 1)
+        conn_factor = conn * 10
+
+        return util + (mem_ratio * 50) + conn_factor
+
+    return min(healthy, key=gpu_score)
 
 
 def select_worker() -> Optional[WorkerState]:
