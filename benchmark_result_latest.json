@@ -1,50 +1,49 @@
 {
-  "total": 10,
-  "success": 6,
-  "failed": 4,
-  "error_rate": 40.0,
-  "total_time_s": 9.16,
-  "throughput_rps": 1.09,
-  "avg_latency_s": 3.2253,
-  "min_latency_s": 0.369,
-  "max_latency_s": 6.4283,
-  "p50_s": 2.4066,
-  "p95_s": 4.954,
-  "p99_s": 4.954,
+  "total": 1000,
+  "success": 538,
+  "failed": 462,
+  "error_rate": 46.2,
+  "total_time_s": 100.94,
+  "throughput_rps": 9.91,
+  "avg_latency_s": 13.091,
+  "min_latency_s": 0.0022,
+  "max_latency_s": 61.4777,
+  "p50_s": 0.0118,
+  "p95_s": 53.8607,
+  "p99_s": 59.2571,
   "sample_errors": [
     "[WinError 10054] An existing connection was forcibly closed by the remote host",
     "[WinError 10054] An existing connection was forcibly closed by the remote host",
-    "[WinError 10054] An existing connection was forcibly closed by the remote host",
+    "[WinError 10053] An established connection was aborted by the software in your host machine",
+    "[WinError 10053] An established connection was aborted by the software in your host machine",
     "[WinError 10054] An existing connection was forcibly closed by the remote host"
   ],
   "rag_accuracy": {
     "total_queries": 5,
-    "successful": 2,
-    "has_sources": 2,
-    "keyword_matches": 2,
-    "rag_accuracy_percent": 40.0,
-    "sources_coverage_percent": 40.0,
-    "avg_retrieval_time_ms": 2805.83,
+    "successful": 0,
+    "has_sources": 0,
+    "keyword_matches": 0,
+    "rag_accuracy_percent": 0.0,
+    "sources_coverage_percent": 0.0,
+    "avg_retrieval_time_ms": 0,
     "details": [
       {
         "query": "What is a dog?",
         "description": "Dog-related query",
-        "success": true,
-        "has_sources": true,
-        "keyword_match": true,
-        "match_score": 0.4,
-        "sources_count": 3,
-        "retrieval_time_ms": 2498.64
+        "success": false,
+        "has_sources": false,
+        "keyword_match": false,
+        "match_score": 0,
+        "error": "<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body>\r\n<center><h1>502 Bad Gateway</h1></cente"
       },
       {
         "query": "Tell me about cats",
         "description": "Cat-related query",
-        "success": true,
-        "has_sources": true,
-        "keyword_match": true,
-        "match_score": 0.4,
-        "sources_count": 3,
-        "retrieval_time_ms": 3113.03
+        "success": false,
+        "has_sources": false,
+        "keyword_match": false,
+        "match_score": 0,
+        "error": "<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body>\r\n<center><h1>502 Bad Gateway</h1></cente"
       },
       {
         "query": "What do you know about hamsters?",
@@ -53,7 +52,7 @@
         "has_sources": false,
         "keyword_match": false,
         "match_score": 0,
-        "error": "[WinError 10054] An existing connection was forcibly closed by the remote host"
+        "error": "<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body>\r\n<center><h1>502 Bad Gateway</h1></cente"
       },
       {
         "query": "Explain artificial intelligence",
@@ -62,7 +61,7 @@
         "has_sources": false,
         "keyword_match": false,
         "match_score": 0,
-        "error": "[WinError 10061] No connection could be made because the target machine actively refused it"
+        "error": "<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body>\r\n<center><h1>502 Bad Gateway</h1></cente"
       },
       {
         "query": "What is machine learning?",
@@ -71,15 +70,15 @@
         "has_sources": false,
         "keyword_match": false,
         "match_score": 0,
-        "error": "[WinError 10061] No connection could be made because the target machine actively refused it"
+        "error": "<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body>\r\n<center><h1>502 Bad Gateway</h1></cente"
       }
     ]
   },
   "label": "single-test",
   "config": {
-    "workers": 2,
+    "workers": 4,
     "model": "smollm2:135m",
-    "concurrency": 4,
+    "concurrency": 500,
     "strategy": "round_robin",
     "ollama_num_gpu": "",
     "ollama_ctx": "",

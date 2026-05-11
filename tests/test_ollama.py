@@ -31,7 +31,7 @@ class TestOllamaIntegration:
         client.close()
 
     def test_smollm2_model_available(self):
-        assert "smollm2:135m" in TestOllamaIntegration.model_names
+        assert "smollm:135m" in TestOllamaIntegration.model_names
 
     def test_nomic_embed_model_available(self):
         assert any("nomic" in name.lower() for name in TestOllamaIntegration.model_names)
@@ -40,7 +40,7 @@ class TestOllamaIntegration:
         client = httpx.Client(timeout=60.0)
         r = client.post(
             "http://localhost:11434/api/generate",
-            json={"model": "smollm2:135m", "prompt": "Hi", "stream": False}
+            json={"model": "smollm:135m", "prompt": "Hi", "stream": False}
         )
         assert r.status_code == 200
         data = r.json()
@@ -64,7 +64,7 @@ class TestOllamaIntegration:
         r = client.post(
             "http://localhost:11434/api/generate",
             json={
-                "model": "smollm2:135m",
+                "model": "smollm:135m",
                 "prompt": "Explain what is a neural network in one sentence.",
                 "stream": False
             }
@@ -107,7 +107,7 @@ class TestGPUDetection:
 
         r = client.post(
             "http://localhost:11434/api/generate",
-            json={"model": "smollm2:135m", "prompt": "Test", "stream": False}
+            json={"model": "smollm:135m", "prompt": "Test", "stream": False}
         )
         assert r.status_code == 200
 

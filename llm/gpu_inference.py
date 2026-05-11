@@ -6,7 +6,7 @@ from collections import OrderedDict
 import time
 
 
-LLM_MODEL = "smollm2:135m"
+LLM_MODEL = "smollm:135m"
 EMBEDDING_MODEL = "nomic-embed-text:latest"
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 CACHE_SIZE = 500

@@ -35,8 +35,8 @@ def check_ollama():
             text=True,
             timeout=5
         )
-        if result.returncode == 0 and "smollm2:135m" in result.stdout:
-            print("\nOllama: Running with smollm2:135m model")
+        if result.returncode == 0 and "smollm:135m" in result.stdout:
+            print("\nOllama: Running with smollm:135m model")
             return True
         else:
             print("Ollama not running or model not loaded")

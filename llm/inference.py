@@ -4,7 +4,7 @@ from typing import List, Optional
 from langchain_ollama import OllamaLLM
 
 
-LLM_MODEL = os.environ.get("LLM_MODEL", "smollm2:135m")
+LLM_MODEL = os.environ.get("LLM_MODEL", "smollm:135m")
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_NUM_GPU = os.environ.get("OLLAMA_NUM_GPU", "")
 OLLAMA_CONTEXT_LENGTH = os.environ.get("OLLAMA_CONTEXT_LENGTH", "")

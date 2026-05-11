@@ -20,12 +20,12 @@ WORKER_PORT = int(os.environ.get("PORT", 8001))
 MASTER_NODE_URL = os.environ.get("MASTER_NODE_URL", "http://localhost:9000")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 
-MAX_QUEUE_SIZE = 100
+MAX_QUEUE_SIZE = 500
 BATCH_SIZE = 10
 BATCH_TIMEOUT_MS = 50
-MAX_CONCURRENT_TASKS = int(os.environ.get("MAX_CONCURRENT_TASKS", "4"))
+MAX_CONCURRENT_TASKS = int(os.environ.get("MAX_CONCURRENT_TASKS", "20"))
 CACHE_SIZE = 500
-BACKPRESSURE_QUEUE_SIZE = int(os.environ.get("BACKPRESSURE_QUEUE_SIZE", "50"))
+BACKPRESSURE_QUEUE_SIZE = int(os.environ.get("BACKPRESSURE_QUEUE_SIZE", "200"))
 EMBED_BATCH_SIZE = 20
 
 request_semaphore: Optional[asyncio.Semaphore] = None
@@ -105,14 +105,26 @@ async def close_services():
         await httpx_client.aclose()
 
 
+
 async def warmup():
+    """Warm up inference engine with retry logic"""
     print(f"[{WORKER_ID}] Warming up inference engine...")
-    try:
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, lambda: inference_engine.generate("ping"))
-        print(f"[{WORKER_ID}] Warmup complete")
-    except Exception as e:
-        print(f"[{WORKER_ID}] Warmup failed: {e}")
+    max_retries = 5
+    retry_delay = 2
+    
+    for attempt in range(max_retries):
+        try:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, lambda: inference_engine.generate("ping"))
+            print(f"[{WORKER_ID}] Warmup complete")
+            return
+        except Exception as e:
+            if attempt < max_retries - 1:
+                print(f"[{WORKER_ID}] Warmup attempt {attempt + 1} failed: {e}. Retrying in {retry_delay}s...")
+                await asyncio.sleep(retry_delay)
+                retry_delay *= 1.5  # Exponential backoff
+            else:
+                print(f"[{WORKER_ID}] Warmup failed after {max_retries} attempts. Worker will continue without warmup.")
 
 
 async def retrieve_docs(query: str, top_k: int) -> List[str]:

@@ -319,7 +319,7 @@ def run_benchmark_suite(args):
     if args.model:
         models = [args.model]
     else:
-        models = ["smollm2:135m", "smollm2:360m"]
+        models = ["smollm:135m"]
 
     available = []
     for m in models:
@@ -446,7 +446,7 @@ def main():
                         help="Bypass NGINX, send requests directly to workers")
     args = parser.parse_args()
 
-    target = args.model or "smollm2:135m"
+    target = args.model or "smollm:135m"
     if not check_ollama(target):
         sys.exit(1)
 
@@ -461,7 +461,7 @@ def main():
             r = run_single_benchmark(
                 label="single-test",
                 workers=args.workers or 2,
-                model=args.model or "smollm2:135m",
+                model=args.model or "smollm:135m",
                 requests=args.requests,
                 concurrency=args.concurrency or 10,
                 ollama_num_gpu=args.num_gpu,

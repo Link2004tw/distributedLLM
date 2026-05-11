@@ -7,7 +7,7 @@ start = time.time()
 r = subprocess.run([
     'curl', '-s', '-X', 'POST', 'http://localhost:11434/api/generate',
     '-H', 'Content-Type: application/json',
-    '-d', '{"model":"smollm2:135m","prompt":"What is 2+2?","stream":false}'
+    '-d', '{"model":"smollm:135m","prompt":"What is 2+2?","stream":false}'
 ], capture_output=True, text=True)
 elapsed = time.time() - start
 

@@ -1,4 +1,5 @@
 import os
+import sys
 from typing import List
 from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
@@ -22,6 +23,13 @@ class Retriever:
             embedding_function=self.embeddings,
             collection_name=COLLECTION_NAME,
         )
+        
+        # Log initialization status
+        doc_count = self.get_count()
+        if doc_count == 0:
+            print(f"[RAG] WARNING: No documents in ChromaDB. Run 'python ingest.py' to populate the database.", file=sys.stderr)
+        else:
+            print(f"[RAG] Retriever initialized with {doc_count} documents.", file=sys.stderr)
 
     def set_base_url(self, url: str):
         self.base_url = url
