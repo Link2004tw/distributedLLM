@@ -1,71 +1,60 @@
 import os
 import time
 import uuid
-from typing import List
+import asyncio
+from typing import List, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import httpx
 from concurrent.futures import ThreadPoolExecutor
 
-from rag.retriever import retriever
-from llm.inference import inference_engine
+from workers.gpu_worker import GPUWorker
 
 app = FastAPI()
 
 WORKER_ID = os.environ.get("WORKER_ID", f"worker-{uuid.uuid4().hex[:8]}")
-WORKER_PORT = int(os.environ.get("PORT", 8001))
-MASTER_NODE_URL = "http://localhost:9000"
+WORKER_PORT = int(os.environ.get("WORKER_PORT", 8001))
+MASTER_URL = os.environ.get("MASTER_URL", "http://127.0.0.1:9000")
 EXECUTOR = ThreadPoolExecutor(max_workers=10)
+
+worker_instance = GPUWorker(worker_id=WORKER_ID)
 
 active_connections = 0
 avg_latency_ms = 0.0
 latencies: List[float] = []
 
-
 class QueryRequest(BaseModel):
+    id: Optional[str] = None
+    request_id: Optional[str] = None
+    client_id: Optional[int] = None
     query: str
-    user_id: str = ""
     top_k: int = 3
-
 
 @app.on_event("startup")
 async def startup_event():
     async with httpx.AsyncClient() as client:
         try:
             await client.post(
-                f"{MASTER_NODE_URL}/register",
-                json={"worker_id": WORKER_ID, "port": WORKER_PORT},
+                f"{MASTER_URL}/workers/register",
+                json={"worker_id": WORKER_ID, "port": WORKER_PORT, "host": "127.0.0.1"},
+                timeout=5.0
             )
-        except Exception:
-            pass
-
-
-def process_request_sync(query: str, top_k: int) -> dict:
-    start_time = time.time()
-
-    docs = retriever.retrieve(query, top_k=top_k)
-    answer = inference_engine.generate_with_context(query, docs)
-
-    latency = (time.time() - start_time) * 1000
-    return {
-        "answer": answer,
-        "sources": docs,
-        "latency_ms": latency,
-    }
-
+        except Exception as e:
+            print(f"Failed to register with master: {e}")
 
 @app.post("/query")
 async def handle_query(request: QueryRequest):
     global active_connections, avg_latency_ms, latencies
 
     active_connections += 1
+    req_id = request.request_id or request.id or str(uuid.uuid4())
 
     try:
-        loop = __import__("asyncio").get_event_loop()
+        loop = asyncio.get_event_loop()
         future = loop.run_in_executor(
-            EXECUTOR, process_request_sync, request.query, request.top_k
+            EXECUTOR, worker_instance.process, request.query, req_id
         )
-        result = await __import__("asyncio").wrap_future(future)
+        result = await future
 
         latencies.append(result["latency_ms"])
         if len(latencies) > 100:
@@ -74,21 +63,21 @@ async def handle_query(request: QueryRequest):
 
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return {
+            "request_id": req_id,
+            "worker_id": WORKER_ID,
+            "answer": f"Error: {str(e)}",
+            "sources": [],
+            "latency_ms": 0,
+            "status": "error"
+        }
     finally:
         active_connections -= 1
-
 
 @app.get("/health")
 async def health_check():
     return {
+        "status": "healthy",
         "worker_id": WORKER_ID,
-        "healthy": True,
-        "active_connections": active_connections,
-        "avg_latency_ms": avg_latency_ms,
+        "port": WORKER_PORT
     }
-
-
-@app.get("/worker-id")
-async def get_worker_id():
-    return {"worker_id": WORKER_ID}

@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 
-MASTER_URL = os.getenv("MASTER_URL", "http://127.0.0.1:9000")
+MASTER_URL = os.getenv("MASTER_URL", "http://127.0.0.1:8000")
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
