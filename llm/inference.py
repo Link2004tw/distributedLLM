@@ -21,7 +21,7 @@ class InferenceEngine:
         limits = httpx.Limits(max_connections=500, max_keepalive_connections=250)
         self._client = httpx.AsyncClient(
             base_url=OLLAMA_BASE_URL,
-            timeout=httpx.Timeout(300.0, connect=30.0),
+            timeout=httpx.Timeout(3600.0, connect=30.0),
             limits=limits
         )
         self._semaphore = asyncio.Semaphore(20)

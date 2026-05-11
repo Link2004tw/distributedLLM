@@ -356,7 +356,7 @@ def run_single_benchmark(label: str, workers: int, model: str,
                 return None
 
         log("All workers ready. Running load test...")
-        load_timeout = max(300.0, requests / max(1, concurrency) * 120.0)
+        load_timeout = 3600.0
         result = run_load_test(requests, concurrency, timeout_s=load_timeout)
 
         log("Draining worker queues before RAG test...")

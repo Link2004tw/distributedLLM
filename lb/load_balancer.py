@@ -145,7 +145,7 @@ class StrategyRequest(BaseModel):
 async def init_httpx():
     global httpx_client
     limits = httpx.Limits(max_connections=1000, max_keepalive_connections=500)
-    httpx_client = httpx.AsyncClient(timeout=300.0, limits=limits)
+    httpx_client = httpx.AsyncClient(timeout=3600.0, limits=limits)
 
 
 async def close_httpx():
@@ -315,7 +315,7 @@ async def reassign_pending_requests():
             resp = await httpx_client.post(
                 f"{worker.url}/query",
                 json={"query": req.query, "top_k": req.top_k},
-                timeout=120.0
+                timeout=300.0
             )
             if resp.status_code == 200:
                 routing_state.reassigned_requests += 1
@@ -341,7 +341,7 @@ async def forward_to_worker(worker: WorkerState, query: str, top_k: int, exclude
             resp = await httpx_client.post(
                 f"{worker.url}/query",
                 json={"query": query, "top_k": top_k},
-                timeout=300.0
+                timeout=3600.0
             )
             if resp.status_code == 200:
                 worker.active_connections += 1

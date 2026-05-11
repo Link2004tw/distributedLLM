@@ -93,7 +93,7 @@ def get_embed_key(query: str) -> str:
 async def init_services():
     global httpx_client, request_semaphore, active_connections_lock, latencies_lock
     limits = httpx.Limits(max_connections=500, max_keepalive_connections=250)
-    httpx_client = httpx.AsyncClient(timeout=300.0, limits=limits)
+    httpx_client = httpx.AsyncClient(timeout=3600.0, limits=limits)
     request_semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
     active_connections_lock = asyncio.Lock()
     latencies_lock = asyncio.Lock()
