@@ -49,55 +49,15 @@ def setup_nginx():
     return True
 
 
-def generate_lb_nginx_config(upstream_host: str = "127.0.0.1", upstream_port: int = 8080) -> str:
-    return f"""worker_processes auto;
-
-events {{
-    worker_connections 8192;
-    multi_accept on;
-    use epoll;
-}}
-
-http {{
-    server {{
-        listen 8000 backlog=4096;
-        server_name localhost;
-
-        location /query {{
-            proxy_pass http://{upstream_host}:{upstream_port}/query;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_read_timeout 3600s;
-            proxy_connect_timeout 30s;
-            proxy_next_upstream error timeout invalid_header http_500 http_502 http_503;
-            proxy_next_upstream_tries 5;
-            proxy_ignore_client_abort on;
-        }}
-
-        location /health {{
-            return 200 "OK\\n";
-        }}
-
-        location /nginx_status {{
-            stub_status;
-            allow 127.0.0.1;
-            deny all;
-        }}
-    }}
-}}
-"""
-
-
-def start_nginx(lb_host: str = "127.0.0.1", lb_port: int = 8080):
-    conf_content = generate_lb_nginx_config(lb_host, lb_port)
-    tmp_conf = Path("/tmp/nginx-benchmark.conf")
-    tmp_conf.write_text(conf_content)
-    shutil.copy2(str(tmp_conf), "/etc/nginx/nginx.conf")
+def start_nginx():
+    conf_src = ROOT / "lb" / "nginx.conf"
+    conf_dst = Path("/etc/nginx/nginx.conf")
+    shutil.copy2(str(conf_src), str(conf_dst))
     subprocess.run(["pkill", "-f", "nginx"], capture_output=True)
     time.sleep(1)
     subprocess.Popen(["nginx"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(2)
-    log(f"NGINX started on port 8000 (upstream: {lb_host}:{lb_port})")
+    log("NGINX started on port 8000")
     return True
 
 
@@ -330,14 +290,29 @@ def check_rag_accuracy(query_url: str, timeout_s: float = 300.0) -> dict:
     }
 
 
+def apply_nginx_strategy(strategy: str):
+    nginx_conf_path = ROOT / "lb" / "nginx.conf"
+    if nginx_conf_path.exists():
+        content = nginx_conf_path.read_text()
+        if strategy == "least_connections":
+            content = content.replace("# least_conn;", "least_conn;")
+            if "least_conn;" not in content:
+                content = content.replace("server localhost", "least_conn;\n        server localhost")
+        else:
+            content = content.replace("least_conn;", "# least_conn;")
+        nginx_conf_path.write_text(content)
+        import shutil
+        shutil.copy2(str(nginx_conf_path), "/etc/nginx/nginx.conf")
+        subprocess.run(["nginx", "-s", "reload"], capture_output=True, timeout=10)
+
+
 def run_single_benchmark(label: str, workers: int, model: str,
                          requests: int, concurrency: int,
                          nginx_strategy: str = "round_robin",
                          ollama_num_gpu: str = "",
                          ollama_ctx: str = "",
                          ollama_batch: str = "",
-                         embedding_model: str = "nomic-embed-text:latest",
-                         worker_host: str = "localhost"):
+                         embedding_model: str = "nomic-embed-text:latest"):
     log(f"\n{'='*60}")
     log(f"BENCHMARK: {label}")
     log(f"  workers={workers}, model={model}, concurrency={concurrency}")
@@ -345,9 +320,11 @@ def run_single_benchmark(label: str, workers: int, model: str,
     log(f"{'='*60}")
 
     procs = []
-    lb_port = 8080
 
     try:
+        apply_nginx_strategy(nginx_strategy)
+        log(f"NGINX strategy: {nginx_strategy}")
+
         log("Starting master...")
         p = start_component("master", "master.monitor", 9000)
         procs.append(p)
@@ -366,7 +343,6 @@ def run_single_benchmark(label: str, workers: int, model: str,
                 "MAX_CONCURRENT_TASKS": str(max(10, concurrency)),
                 "BACKPRESSURE_QUEUE_SIZE": str(max(50, concurrency * 3)),
                 "CACHE_SIZE": "500",
-                "WORKER_HOST": worker_host,
             }
             if ollama_num_gpu:
                 env["OLLAMA_NUM_GPU"] = ollama_num_gpu
@@ -379,30 +355,6 @@ def run_single_benchmark(label: str, workers: int, model: str,
             if not wait_for_worker_ready(f"http://127.0.0.1:{port}"):
                 log(f"FAIL: {wid} not ready (model load error)")
                 return None
-
-        log("Starting load balancer with master scheduling...")
-        p = start_component("lb", "lb.load_balancer", lb_port, env={
-            "MASTER_NODE_URL": "http://localhost:9000",
-            "LB_PORT": str(lb_port),
-            "USE_MASTER_SCHEDULING": "1",
-        })
-        procs.append(p)
-        if not wait_for_ready(f"http://127.0.0.1:{lb_port}/health"):
-            log("FAIL: load balancer did not start")
-            return None
-
-        log("Configuring NGINX to proxy through load balancer...")
-        start_nginx("127.0.0.1", lb_port)
-
-        log(f"Setting LB strategy to {nginx_strategy}...")
-        try:
-            import httpx
-            httpx.post(f"http://127.0.0.1:{lb_port}/strategy",
-                       json={"strategy": nginx_strategy}, timeout=5)
-        except Exception as e:
-            log(f"Warning: could not set strategy: {e}")
-
-        log(f"NGINX strategy: {nginx_strategy} (via LB + Master scheduling)")
 
         log("All workers ready. Running load test...")
         load_timeout = 3600.0
@@ -425,8 +377,6 @@ def run_single_benchmark(label: str, workers: int, model: str,
             "ollama_ctx": ollama_ctx,
             "ollama_batch": ollama_batch,
             "embedding_model": embedding_model,
-            "worker_host": worker_host,
-            "lb_master_scheduling": True,
         }
         return result
 
@@ -447,8 +397,6 @@ def run_fault_test(args):
     model = args.model or "smollm2:135m"
     concurrency = args.concurrency or 10
     requests = args.requests or 100
-    worker_host = args.host or "localhost"
-    lb_port = 8080
 
     log(f"\n{'='*60}")
     log(f"FAULT TOLERANCE TEST")
@@ -458,6 +406,8 @@ def run_fault_test(args):
     procs = []
 
     try:
+        apply_nginx_strategy("round_robin")
+
         log("Starting master...")
         p = start_component("master", "master.monitor", 9000)
         procs.append(p)
@@ -473,7 +423,6 @@ def run_fault_test(args):
                 "MAX_CONCURRENT_TASKS": str(max(10, concurrency)),
                 "BACKPRESSURE_QUEUE_SIZE": str(max(50, concurrency * 3)),
                 "CACHE_SIZE": "500",
-                "WORKER_HOST": worker_host,
             }
             p = start_component(wid, "workers.worker", port, env=env)
             procs.append(p)
@@ -481,18 +430,6 @@ def run_fault_test(args):
 
         for i in range(1, workers + 1):
             wait_for_worker_ready(f"http://127.0.0.1:{8000 + i}")
-
-        log("Starting load balancer...")
-        p = start_component("lb", "lb.load_balancer", lb_port, env={
-            "MASTER_NODE_URL": "http://localhost:9000",
-            "LB_PORT": str(lb_port),
-            "USE_MASTER_SCHEDULING": "1",
-        })
-        procs.append(p)
-        wait_for_ready(f"http://127.0.0.1:{lb_port}/health")
-
-        log("Starting NGINX...")
-        start_nginx("127.0.0.1", lb_port)
 
         log("\n--- Phase 1: Baseline (all workers healthy) ---")
         baseline = run_load_test(requests // 4, concurrency, timeout_s=300.0)
@@ -522,12 +459,6 @@ def run_fault_test(args):
             for w in registered:
                 status = "HEALTHY" if w.get("healthy") else "UNHEALTHY"
                 log(f"  {w['worker_id']}: {status}")
-
-            r = httpx.get(f"http://127.0.0.1:{lb_port}/workers", timeout=5)
-            lb_workers = r.json().get("workers", [])
-            for w in lb_workers:
-                status = "HEALTHY" if w.get("healthy") else "UNHEALTHY"
-                log(f"  LB {w['worker_id']}: {status}")
         except Exception as e:
             log(f"  Could not verify worker status: {e}")
 
@@ -541,7 +472,6 @@ def run_fault_test(args):
             "MAX_CONCURRENT_TASKS": str(max(10, concurrency)),
             "BACKPRESSURE_QUEUE_SIZE": str(max(50, concurrency * 3)),
             "CACHE_SIZE": "500",
-            "WORKER_HOST": worker_host,
         }
         p = start_component(wid, "workers.worker", killed_port, env=env)
         procs.append(p)
@@ -631,7 +561,6 @@ def run_benchmark_suite(args):
                     ollama_ctx=args.ctx,
                     ollama_batch=args.batch,
                     embedding_model=args.embedding_model,
-                    worker_host=args.host,
                 )
                 if r:
                     results.append(r)
@@ -649,7 +578,6 @@ def run_benchmark_suite(args):
                     ollama_ctx=args.ctx,
                     ollama_batch=args.batch,
                     embedding_model=args.embedding_model,
-                    worker_host=args.host,
                 )
                 if r:
                     results.append(r)
@@ -720,8 +648,6 @@ def main():
                         help="Run a single quick test and exit")
     parser.add_argument("--fault-test", action="store_true",
                         help="Run fault tolerance test (kill worker mid-benchmark)")
-    parser.add_argument("--host", type=str, default="localhost",
-                        help="Worker host for multi-node deployment (default: localhost)")
 
     args = parser.parse_args()
 
@@ -732,30 +658,35 @@ def main():
     if not setup_nginx():
         sys.exit(1)
 
+    if not start_nginx():
+        sys.exit(1)
+
     if args.fault_test:
         run_fault_test(args)
         return
 
-    if args.single:
-        r = run_single_benchmark(
-            label="single-test",
-            workers=args.workers or 2,
-            model=args.model or "smollm2:135m",
-            requests=args.requests,
-            concurrency=args.concurrency or 10,
-            ollama_num_gpu=args.num_gpu,
-            ollama_ctx=args.ctx,
-            ollama_batch=args.batch,
-            embedding_model=args.embedding_model,
-            worker_host=args.host,
-        )
-        if r:
-            _print_result(r)
-            out = ROOT / "benchmark_result_latest.json"
-            out.write_text(json.dumps(r, indent=2))
-            log(f"Result saved to {out}")
-    else:
-        run_benchmark_suite(args)
+    try:
+        if args.single:
+            r = run_single_benchmark(
+                label="single-test",
+                workers=args.workers or 2,
+                model=args.model or "smollm2:135m",
+                requests=args.requests,
+                concurrency=args.concurrency or 10,
+                ollama_num_gpu=args.num_gpu,
+                ollama_ctx=args.ctx,
+                ollama_batch=args.batch,
+                embedding_model=args.embedding_model,
+            )
+            if r:
+                _print_result(r)
+                out = ROOT / "benchmark_result_latest.json"
+                out.write_text(json.dumps(r, indent=2))
+                log(f"Result saved to {out}")
+        else:
+            run_benchmark_suite(args)
+    finally:
+        stop_nginx()
 
 
 if __name__ == "__main__":

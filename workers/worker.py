@@ -17,7 +17,6 @@ from llm.inference import InferenceEngine, inference_engine
 
 WORKER_ID = os.environ.get("WORKER_ID", f"worker-{uuid.uuid4().hex[:8]}")
 WORKER_PORT = int(os.environ.get("PORT", 8001))
-WORKER_HOST = os.environ.get("WORKER_HOST", "localhost")
 MASTER_NODE_URL = os.environ.get("MASTER_NODE_URL", "http://localhost:9000")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 
@@ -361,7 +360,7 @@ async def startup_event():
     try:
         await httpx_client.post(
             f"{MASTER_NODE_URL}/register",
-            json={"worker_id": WORKER_ID, "port": WORKER_PORT, "host": WORKER_HOST},
+            json={"worker_id": WORKER_ID, "port": WORKER_PORT},
         )
     except Exception:
         pass
