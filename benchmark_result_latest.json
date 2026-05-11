@@ -30,47 +30,89 @@
       {
         "query": "What is a dog?",
         "description": "Dog-related query",
+<<<<<<< HEAD
         "success": false,
         "has_sources": false,
         "keyword_match": false,
         "match_score": 0,
         "error": "<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body>\r\n<center><h1>502 Bad Gateway</h1></cente"
+=======
+        "success": true,
+        "has_sources": true,
+        "keyword_match": false,
+        "match_score": 0.2,
+        "sources_count": 3,
+        "retrieval_time_ms": 1322.83
+>>>>>>> 52a77467fd264e437544459966887d1c0a9c8a22
       },
       {
         "query": "Tell me about cats",
         "description": "Cat-related query",
+<<<<<<< HEAD
         "success": false,
         "has_sources": false,
         "keyword_match": false,
         "match_score": 0,
         "error": "<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body>\r\n<center><h1>502 Bad Gateway</h1></cente"
+=======
+        "success": true,
+        "has_sources": true,
+        "keyword_match": true,
+        "match_score": 0.4,
+        "sources_count": 3,
+        "retrieval_time_ms": 607.4
+>>>>>>> 52a77467fd264e437544459966887d1c0a9c8a22
       },
       {
         "query": "What do you know about hamsters?",
         "description": "Hamster-related query",
+<<<<<<< HEAD
         "success": false,
         "has_sources": false,
         "keyword_match": false,
         "match_score": 0,
         "error": "<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body>\r\n<center><h1>502 Bad Gateway</h1></cente"
+=======
+        "success": true,
+        "has_sources": true,
+        "keyword_match": true,
+        "match_score": 1.0,
+        "sources_count": 3,
+        "retrieval_time_ms": 2230.6
+>>>>>>> 52a77467fd264e437544459966887d1c0a9c8a22
       },
       {
         "query": "Explain artificial intelligence",
         "description": "AI definition query",
-        "success": false,
-        "has_sources": false,
+        "success": true,
+        "has_sources": true,
         "keyword_match": false,
+<<<<<<< HEAD
         "match_score": 0,
         "error": "<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body>\r\n<center><h1>502 Bad Gateway</h1></cente"
+=======
+        "match_score": 0.25,
+        "sources_count": 3,
+        "retrieval_time_ms": 561.74
+>>>>>>> 52a77467fd264e437544459966887d1c0a9c8a22
       },
       {
         "query": "What is machine learning?",
         "description": "ML definition query",
+<<<<<<< HEAD
         "success": false,
         "has_sources": false,
         "keyword_match": false,
         "match_score": 0,
         "error": "<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body>\r\n<center><h1>502 Bad Gateway</h1></cente"
+=======
+        "success": true,
+        "has_sources": true,
+        "keyword_match": true,
+        "match_score": 0.6,
+        "sources_count": 3,
+        "retrieval_time_ms": 775.27
+>>>>>>> 52a77467fd264e437544459966887d1c0a9c8a22
       }
     ]
   },
