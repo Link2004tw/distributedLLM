@@ -1,6 +1,6 @@
 import asyncio
 import time
-from typing import Dict, Set
+from typing import Dict, Optional, Set
 from fastapi import FastAPI, HTTPException
 import httpx
 
@@ -9,6 +9,7 @@ from common.models import (
     HealthCheck,
     MetricsSummary,
 )
+from master.scheduler import Scheduler
 
 app = FastAPI()
 
@@ -18,6 +19,8 @@ MASTER_PORT = 9000
 HEARTBEAT_INTERVAL = 5
 FAILURE_THRESHOLD = 3
 LOAD_BALANCER_URL = "http://localhost:8000"
+
+scheduler = Scheduler()
 
 
 @app.on_event("startup")
@@ -58,16 +61,10 @@ async def heartbeat_monitor():
                 FAILED_WORKERS.add(worker_id)
                 if len(FAILED_WORKERS) >= FAILURE_THRESHOLD:
                     await notify_load_balancer(worker_id)
-
-
-async def notify_load_balancer(worker_id: str):
-    try:
-        async with httpx.AsyncClient() as client:
-            await client.post(
-                f"{LOAD_BALANCER_URL}/worker/unhealthy", json={"worker_id": worker_id}
-            )
-    except Exception:
-        pass
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(
+                        None, lambda: scheduler.handle_failure(worker_id)
+                    )
 
 
 @app.post("/register")
@@ -116,6 +113,35 @@ async def get_metrics():
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "workers": len(REGISTERED_WORKERS)}
+
+
+@app.post("/distribute")
+async def distribute(data: dict):
+    strategy = data.pop("strategy", "round_robin")
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None, lambda: scheduler.distribute_task(data, strategy)
+    )
+    if result is None:
+        raise HTTPException(status_code=503, detail="No healthy workers")
+    return result
+
+
+@app.post("/monitor")
+async def monitor():
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, scheduler.monitor_workers)
+    return result
+
+
+@app.post("/handle-failure")
+async def handle_failure(data: dict):
+    worker_id = data.get("worker_id", "")
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None, lambda: scheduler.handle_failure(worker_id)
+    )
+    return result
 
 
 @app.delete("/worker/{worker_id}")

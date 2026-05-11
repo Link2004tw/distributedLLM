@@ -4,6 +4,7 @@ from langchain_ollama import OllamaLLM
 
 
 LLM_MODEL = os.environ.get("LLM_MODEL", "smollm2:135m")
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "")
 OLLAMA_NUM_GPU = os.environ.get("OLLAMA_NUM_GPU", "")
 OLLAMA_CONTEXT_LENGTH = os.environ.get("OLLAMA_CONTEXT_LENGTH", "")
 OLLAMA_BATCH_SIZE = os.environ.get("OLLAMA_BATCH_SIZE", "")
@@ -12,6 +13,8 @@ OLLAMA_BATCH_SIZE = os.environ.get("OLLAMA_BATCH_SIZE", "")
 class InferenceEngine:
     def __init__(self, model: str = LLM_MODEL):
         kwargs = {"model": model}
+        if OLLAMA_BASE_URL:
+            kwargs["base_url"] = OLLAMA_BASE_URL
         if OLLAMA_NUM_GPU:
             kwargs["num_gpu"] = int(OLLAMA_NUM_GPU)
         if OLLAMA_CONTEXT_LENGTH:

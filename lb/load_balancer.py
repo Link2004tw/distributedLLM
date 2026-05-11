@@ -19,6 +19,8 @@ UPSTREAM_TEMPLATE = """    upstream llm_backend {{
 class LoadBalancer:
 
     def __init__(self):
+        self._rr_index = 0
+        self._worker_connections: Dict[str, int] = {}
         self._ensure_running()
 
     def _ensure_running(self):
@@ -116,6 +118,33 @@ class LoadBalancer:
                         "enabled": not disabled,
                     })
         return workers
+
+    def get_next_server(self, strategy: str = "round_robin") -> Optional[dict]:
+        workers = self.get_worker_list()
+        active = [w for w in workers if w.get("enabled", True)]
+        if not active:
+            return None
+
+        if strategy == "least_connections":
+            try:
+                resp = httpx.get("http://localhost:9000/metrics", timeout=2.0)
+                stats = resp.json().get("worker_stats", {})
+                active.sort(key=lambda w: stats.get(f"worker-{w['port']-8000}", 0))
+            except Exception:
+                pass
+            return active[0]
+
+        elif strategy == "load_aware":
+            try:
+                resp = httpx.get("http://localhost:9000/metrics", timeout=2.0)
+                stats = resp.json().get("worker_stats", {})
+                active.sort(key=lambda w: stats.get(f"worker-{w['port']-8000}", 0))
+            except Exception:
+                pass
+            return active[0]
+
+        self._rr_index += 1
+        return active[(self._rr_index - 1) % len(active)]
 
     def get_current_strategy(self) -> str:
         with open(NGINX_CONF) as f:

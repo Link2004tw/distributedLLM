@@ -4,17 +4,6 @@ import os
 
 
 def main():
-    components = [
-        ("Master Node", "master.monitor", "9000"),
-        ("Worker 1", "workers.worker", "8001"),
-        ("Worker 2", "workers.worker", "8002"),
-        ("Worker 3", "workers.worker", "8003"),
-        ("Worker 4", "workers.worker", "8004"),
-        ("Load Balancer (NGINX)", "lb.load_balancer", "8000"),
-        ("LB Controller", "lb.app", "8005"),
-        ("Dashboard", "dashboard.main", "5000"),
-    ]
-
     if len(sys.argv) > 1:
         if sys.argv[1] == "worker":
             worker_num = int(sys.argv[2]) if len(sys.argv) > 2 else 1
@@ -28,14 +17,23 @@ def main():
             print("Starting Master Node on port 9000")
             subprocess.run(["uvicorn", "master.monitor:app", "--port", "9000"])
         elif sys.argv[1] == "lb":
-            print("Starting Load Balancer on port 8000")
-            subprocess.run(["uvicorn", "lb.load_balancer:app", "--port", "8000"])
+            nginx_exe = os.path.join(os.path.dirname(__file__), "lb", "nginx", "nginx.exe")
+            nginx_dir = os.path.join(os.path.dirname(__file__), "lb", "nginx")
+            if os.path.exists(nginx_exe):
+                print("Starting NGINX Load Balancer on port 8000")
+                subprocess.Popen(
+                    [nginx_exe, "-p", nginx_dir],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+            else:
+                print("NGINX not found at", nginx_exe)
+                print("Run setup.ps1 first or use 'controller' for Python LB fallback")
         elif sys.argv[1] == "controller":
             print("Starting LB Controller on port 8005")
             subprocess.run(["uvicorn", "lb.app:app", "--port", "8005"])
         elif sys.argv[1] == "dashboard":
             print("Starting Admin Dashboard on port 5000")
-            subprocess.run(["uvicorn", "dashboard.main:app", "--port", "5000"])
+            subprocess.run(["uvicorn", "dashboard.app:app", "--port", "5000"])
         else:
             print("Usage: python main.py [worker <num>|master|lb|controller|dashboard]")
     else:
@@ -43,7 +41,7 @@ def main():
         print("\nTo start individual components:")
         print("  python main.py master       - Start Master Node (port 9000)")
         print("  python main.py worker <n>   - Start Worker n (ports 8001+)")
-        print("  python main.py lb           - Start NGINX (port 8000)")
+        print("  python main.py lb           - Start NGINX Load Balancer (port 8000)")
         print("  python main.py controller   - Start LB Controller (port 8005)")
         print("  python main.py dashboard    - Start Admin Dashboard (port 5000)")
         print("\nOr start each component manually:")
