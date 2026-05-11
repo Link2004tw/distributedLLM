@@ -133,11 +133,20 @@ def wait_for_worker_ready(url: str, timeout: int = 90):
     return False
 
 
-def run_load_test(total_requests: int, concurrency: int, url: str = "http://127.0.0.1:8000", timeout_s: float = 120.0):
+def run_load_test(total_requests: int, concurrency: int, url: str = "http://127.0.0.1:8000", timeout_s: float = 120.0, worker_urls: list = None):
     import httpx
     from concurrent.futures import ThreadPoolExecutor, as_completed
+    import itertools
 
-    query_url = f"{url}/query"
+    if worker_urls:
+        worker_iter = itertools.cycle([f"{w}/query" for w in worker_urls])
+        def get_url(i):
+            return next(worker_iter)
+    else:
+        single_url = f"{url}/query"
+        def get_url(i):
+            return single_url
+
     samples = [
         "What is distributed inference?",
         "Explain load balancing.",
@@ -161,7 +170,7 @@ def run_load_test(total_requests: int, concurrency: int, url: str = "http://127.
                 payload = {"query": samples[i % len(samples)], "top_k": 1}
                 start = time.perf_counter()
                 try:
-                    r = client.post(query_url, json=payload, timeout=timeout_s)
+                    r = client.post(get_url(i), json=payload, timeout=timeout_s)
                     lat = time.perf_counter() - start
                     return {"success": r.status_code == 200, "latency": lat,
                             "status": r.status_code, "error": None if r.status_code == 200 else r.text}
@@ -208,31 +217,32 @@ def run_single_benchmark(label: str, workers: int, model: str,
                          ollama_num_gpu: str = "",
                          ollama_ctx: str = "",
                          ollama_batch: str = "",
-                         embedding_model: str = "nomic-embed-text:latest"):
+                         embedding_model: str = "nomic-embed-text:latest",
+                         direct: bool = False):
     log(f"\n{'='*60}")
     log(f"BENCHMARK: {label}")
     log(f"  workers={workers}, model={model}, concurrency={concurrency}")
-    log(f"  strategy={nginx_strategy}, num_gpu={ollama_num_gpu or 'default'}")
+    log(f"  strategy={'direct' if direct else nginx_strategy}, num_gpu={ollama_num_gpu or 'default'}")
     log(f"{'='*60}")
 
     procs = []
-
-    nginx_exe = ROOT / "lb" / "nginx" / "nginx.exe"
-    nginx_dir = ROOT / "lb" / "nginx"
     try:
-        nginx_conf_path = ROOT / "lb" / "nginx" / "conf" / "nginx.conf"
-        if nginx_conf_path.exists():
-            content = nginx_conf_path.read_text()
-            if nginx_strategy == "least_connections":
-                content = content.replace("# least_conn;", "least_conn;")
-                if "least_conn;" not in content:
-                    content = content.replace("server localhost", "least_conn;\n        server localhost")
-            else:
-                content = content.replace("least_conn;", "# least_conn;")
-            nginx_conf_path.write_text(content)
-            subprocess.run([str(nginx_exe), "-p", str(nginx_dir), "-s", "reload"],
-                           capture_output=True, timeout=10)
-        log(f"NGINX strategy: {nginx_strategy}")
+        if not direct:
+            nginx_exe = ROOT / "lb" / "nginx" / "nginx.exe"
+            nginx_dir = ROOT / "lb" / "nginx"
+            nginx_conf_path = ROOT / "lb" / "nginx" / "conf" / "nginx.conf"
+            if nginx_conf_path.exists():
+                content = nginx_conf_path.read_text()
+                if nginx_strategy == "least_connections":
+                    content = content.replace("# least_conn;", "least_conn;")
+                    if "least_conn;" not in content:
+                        content = content.replace("server localhost", "least_conn;\n        server localhost")
+                else:
+                    content = content.replace("least_conn;", "# least_conn;")
+                nginx_conf_path.write_text(content)
+                subprocess.run([str(nginx_exe), "-p", str(nginx_dir), "-s", "reload"],
+                               capture_output=True, timeout=10)
+            log(f"NGINX strategy: {nginx_strategy}")
 
         log("Starting master...")
         p = start_component("master", "master.monitor", 9000)
@@ -262,15 +272,28 @@ def run_single_benchmark(label: str, workers: int, model: str,
                 log(f"FAIL: {wid} not ready (model load error)")
                 return None
 
-        log("All workers ready. Running load test...")
-        result = run_load_test(requests, concurrency)
+        log("Warming up models (cold-start avoidance)...")
+        import httpx
+        warmup_targets = [f"http://127.0.0.1:{8000 + i}" for i in range(1, workers + 1)] if direct else ["http://127.0.0.1:8000"]
+        for target in warmup_targets:
+            for _ in range(2):
+                try:
+                    httpx.post(f"{target}/query",
+                               json={"query": "warmup", "top_k": 1},
+                               timeout=30.0)
+                except Exception:
+                    pass
+
+        log("Running load test...")
+        worker_urls = [f"http://127.0.0.1:{8000 + i}" for i in range(1, workers + 1)] if direct else None
+        result = run_load_test(requests, concurrency, worker_urls=worker_urls)
 
         result["label"] = label
         result["config"] = {
             "workers": workers,
             "model": model,
             "concurrency": concurrency,
-            "strategy": nginx_strategy,
+            "strategy": "direct" if direct else nginx_strategy,
             "ollama_num_gpu": ollama_num_gpu,
             "ollama_ctx": ollama_ctx,
             "ollama_batch": ollama_batch,
@@ -324,7 +347,9 @@ def run_benchmark_suite(args):
     for model in models:
         for wc in worker_counts:
             for cc in concurrencies:
-                label = f"model={model} workers={wc} concurrency={cc} rr"
+                label = f"model={model} workers={wc} concurrency={cc}"
+                if not args.direct:
+                    label += " rr"
                 r = run_single_benchmark(
                     label=label,
                     workers=wc,
@@ -336,24 +361,27 @@ def run_benchmark_suite(args):
                     ollama_ctx=args.ctx,
                     ollama_batch=args.batch,
                     embedding_model=args.embedding_model,
+                    direct=args.direct,
                 )
                 if r:
                     results.append(r)
                     _print_result(r)
 
-                label_lc = f"model={model} workers={wc} concurrency={cc} lc"
-                r = run_single_benchmark(
-                    label=label_lc,
-                    workers=wc,
-                    model=model,
-                    requests=requests_per_test,
-                    concurrency=cc,
-                    nginx_strategy="least_connections",
-                    ollama_num_gpu=args.num_gpu,
-                    ollama_ctx=args.ctx,
-                    ollama_batch=args.batch,
-                    embedding_model=args.embedding_model,
-                )
+                if not args.direct:
+                    label_lc = f"model={model} workers={wc} concurrency={cc} lc"
+                    r = run_single_benchmark(
+                        label=label_lc,
+                        workers=wc,
+                        model=model,
+                        requests=requests_per_test,
+                        concurrency=cc,
+                        nginx_strategy="least_connections",
+                        ollama_num_gpu=args.num_gpu,
+                        ollama_ctx=args.ctx,
+                        ollama_batch=args.batch,
+                        embedding_model=args.embedding_model,
+                        direct=args.direct,
+                    )
                 if r:
                     results.append(r)
                     _print_result(r)
@@ -414,17 +442,19 @@ def main():
                         help="Embedding model (default: nomic-embed-text:latest)")
     parser.add_argument("--single", action="store_true",
                         help="Run a single quick test and exit")
+    parser.add_argument("--direct", action="store_true",
+                        help="Bypass NGINX, send requests directly to workers")
     args = parser.parse_args()
 
     target = args.model or "smollm2:135m"
     if not check_ollama(target):
         sys.exit(1)
 
-    if not setup_nginx():
-        sys.exit(1)
-
-    if not start_nginx():
-        sys.exit(1)
+    if not args.direct:
+        if not setup_nginx():
+            sys.exit(1)
+        if not start_nginx():
+            sys.exit(1)
 
     try:
         if args.single:
@@ -438,6 +468,7 @@ def main():
                 ollama_ctx=args.ctx,
                 ollama_batch=args.batch,
                 embedding_model=args.embedding_model,
+                direct=args.direct,
             )
             if r:
                 _print_result(r)
@@ -447,7 +478,8 @@ def main():
         else:
             run_benchmark_suite(args)
     finally:
-        stop_nginx()
+        if not args.direct:
+            stop_nginx()
 
 
 if __name__ == "__main__":

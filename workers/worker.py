@@ -14,6 +14,19 @@ from llm.inference import inference_engine
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    loop = __import__("asyncio").get_event_loop()
+    try:
+        await loop.run_in_executor(
+            None, lambda: retriever.retrieve("warmup", top_k=1)
+        )
+    except Exception:
+        pass
+    try:
+        await loop.run_in_executor(
+            None, lambda: inference_engine.generate("warmup")
+        )
+    except Exception:
+        pass
     async with httpx.AsyncClient() as client:
         try:
             await client.post(
@@ -40,7 +53,7 @@ latencies: List[float] = []
 class QueryRequest(BaseModel):
     query: str
     user_id: str = ""
-    top_k: int = 3
+    top_k: int = int(os.environ.get("TOP_K", "3"))
 
 
 def process_request_sync(query: str, top_k: int) -> dict:

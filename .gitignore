@@ -35,6 +35,10 @@ lb/test_lb.py
 # NGINX downloaded binary, logs, and temp files
 lb/nginx/
 
+# Benchmark output
+benchmark_results_*.json
+benchmark_result_latest.json
+
 # Log files
 *.log
 
