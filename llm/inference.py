@@ -24,7 +24,7 @@ class InferenceEngine:
             timeout=httpx.Timeout(300.0, connect=30.0),
             limits=limits
         )
-        self._semaphore = asyncio.Semaphore(50)
+        self._semaphore = asyncio.Semaphore(20)
 
     async def close(self):
         if self._client:

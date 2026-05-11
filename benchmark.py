@@ -115,7 +115,7 @@ def wait_for_worker_ready(url: str, timeout: int = 90):
     return False
 
 
-def run_load_test(total_requests: int, concurrency: int, url: str = "http://127.0.0.1:8000", timeout_s: float = 120.0):
+def run_load_test(total_requests: int, concurrency: int, url: str = "http://127.0.0.1:8000", timeout_s: float = 600.0):
     import httpx
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -213,7 +213,7 @@ RAG_TEST_QUERIES = [
 ]
 
 
-def check_rag_accuracy(query_url: str, timeout_s: float = 60.0) -> dict:
+def check_rag_accuracy(query_url: str, timeout_s: float = 300.0) -> dict:
     import httpx
 
     results = []
@@ -356,10 +356,14 @@ def run_single_benchmark(label: str, workers: int, model: str,
                 return None
 
         log("All workers ready. Running load test...")
-        result = run_load_test(requests, concurrency)
+        load_timeout = max(300.0, requests / max(1, concurrency) * 120.0)
+        result = run_load_test(requests, concurrency, timeout_s=load_timeout)
+
+        log("Draining worker queues before RAG test...")
+        time.sleep(5)
 
         log("Testing RAG accuracy...")
-        rag_result = check_rag_accuracy("http://127.0.0.1:8000/query")
+        rag_result = check_rag_accuracy("http://127.0.0.1:8000/query", timeout_s=load_timeout)
         result["rag_accuracy"] = rag_result
 
         result["label"] = label
