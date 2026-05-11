@@ -20,12 +20,12 @@ WORKER_PORT = int(os.environ.get("PORT", 8001))
 MASTER_NODE_URL = os.environ.get("MASTER_NODE_URL", "http://localhost:9000")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 
-MAX_QUEUE_SIZE = 100
+MAX_QUEUE_SIZE = 1000
 BATCH_SIZE = 10
 BATCH_TIMEOUT_MS = 50
-MAX_CONCURRENT_TASKS = int(os.environ.get("MAX_CONCURRENT_TASKS", "4"))
+MAX_CONCURRENT_TASKS = int(os.environ.get("MAX_CONCURRENT_TASKS", "250"))
 CACHE_SIZE = 500
-BACKPRESSURE_QUEUE_SIZE = int(os.environ.get("BACKPRESSURE_QUEUE_SIZE", "50"))
+BACKPRESSURE_QUEUE_SIZE = int(os.environ.get("BACKPRESSURE_QUEUE_SIZE", "1000"))
 EMBED_BATCH_SIZE = 20
 
 request_semaphore: Optional[asyncio.Semaphore] = None
@@ -92,24 +92,25 @@ def get_embed_key(query: str) -> str:
 
 async def init_services():
     global httpx_client, request_semaphore, active_connections_lock, latencies_lock
-    limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
-    httpx_client = httpx.AsyncClient(timeout=120.0, limits=limits)
+    limits = httpx.Limits(max_connections=500, max_keepalive_connections=250)
+    httpx_client = httpx.AsyncClient(timeout=300.0, limits=limits)
     request_semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
     active_connections_lock = asyncio.Lock()
     latencies_lock = asyncio.Lock()
+    await inference_engine.init_client()
 
 
 async def close_services():
     global httpx_client
     if httpx_client:
         await httpx_client.aclose()
+    await inference_engine.close()
 
 
 async def warmup():
     print(f"[{WORKER_ID}] Warming up inference engine...")
     try:
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, lambda: inference_engine.generate("ping"))
+        await inference_engine.generate("ping")
         print(f"[{WORKER_ID}] Warmup complete")
     except Exception as e:
         print(f"[{WORKER_ID}] Warmup failed: {e}")
@@ -201,10 +202,7 @@ async def process_single_query(query: str, top_k: int, user_id: str) -> dict:
             answer = "I don't have relevant documents to answer this question. Please try a different query."
         else:
             try:
-                loop = asyncio.get_event_loop()
-                answer = await loop.run_in_executor(
-                    None, lambda: inference_engine.generate_with_context(query, docs)
-                )
+                answer = await inference_engine.generate_with_context(query, docs)
             except Exception as e:
                 print(f"LLM inference error: {e}")
                 return {
@@ -277,10 +275,7 @@ async def process_batch_single(query: str, docs: List[str], top_k: int, batch_st
         answer = "I don't have relevant documents to answer this question."
     else:
         try:
-            loop = asyncio.get_event_loop()
-            answer = await loop.run_in_executor(
-                None, lambda: inference_engine.generate_with_context(query, docs)
-            )
+            answer = await inference_engine.generate_with_context(query, docs)
         except Exception as e:
             print(f"LLM inference error in batch: {e}")
             answer = "Service temporarily unavailable. Please retry."
@@ -336,11 +331,7 @@ async def process_batch_optimized(queries: List[QueryRequest]) -> List[dict]:
 
     if miss_queries:
         try:
-            loop = asyncio.get_event_loop()
-            answers = await loop.run_in_executor(
-                None,
-                lambda: inference_engine.generate_batch(miss_queries, miss_docs)
-            )
+            answers = await inference_engine.generate_batch(miss_queries, miss_docs)
         except Exception as e:
             print(f"Batch generation error: {e}")
             answers = ["Service temporarily unavailable. Please retry." for _ in miss_queries]
@@ -384,13 +375,12 @@ async def shutdown_event():
 async def handle_query(request: QueryRequest):
     global active_connections, avg_latency_ms, latencies
 
-    if request_semaphore.locked() and request_semaphore._value == 0:
-        raise HTTPException(
-            status_code=503,
-            detail="Worker at capacity. Request rejected due to backpressure. Please retry."
-        )
-
     async with active_connections_lock:
+        if active_connections >= BACKPRESSURE_QUEUE_SIZE:
+            raise HTTPException(
+                status_code=503,
+                detail="Worker at capacity. Request rejected due to backpressure. Please retry."
+            )
         active_connections += 1
 
     try:
@@ -401,6 +391,8 @@ async def handle_query(request: QueryRequest):
                 latencies = latencies[-100:]
             avg_latency_ms = sum(latencies) / len(latencies)
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
@@ -415,6 +407,11 @@ async def handle_batch_query(request: BatchQueryRequest):
     batch_size = len(request.queries)
 
     async with active_connections_lock:
+        if active_connections + batch_size > BACKPRESSURE_QUEUE_SIZE:
+            raise HTTPException(
+                status_code=503,
+                detail="Worker at capacity. Batch request rejected."
+            )
         active_connections += batch_size
 
     try:
@@ -438,6 +435,8 @@ async def handle_batch_query(request: BatchQueryRequest):
             ],
             "batch_size": batch_size,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
@@ -448,9 +447,7 @@ async def handle_batch_query(request: BatchQueryRequest):
 @app.get("/ready")
 async def ready_check():
     try:
-        loop = asyncio.get_event_loop()
-        future = loop.run_in_executor(None, lambda: inference_engine.generate("ping"))
-        await asyncio.wait_for(asyncio.shield(future), timeout=15.0)
+        await inference_engine.generate("ping")
         return {"ready": True, "worker_id": WORKER_ID}
     except Exception as e:
         return {"ready": False, "error": str(e), "worker_id": WORKER_ID}
@@ -528,21 +525,14 @@ async def handle_fallback_query(request: QueryRequest):
 
 async def stream_generator(query: str, top_k: int) -> AsyncIterator[str]:
     try:
-        loop = asyncio.get_event_loop()
         docs = await retrieve_docs(query, top_k)
 
         if not docs:
             yield "data: {\"type\": \"done\", \"content\": \"I don't have relevant documents.\"}\n\n"
             return
 
-        def generate_stream():
-            return inference_engine.stream_with_context(query, docs)
-
-        stream = await loop.run_in_executor(None, generate_stream)
-
-        for chunk in stream:
-            yield f"data: {{\"type\": \"chunk\", \"content\": {repr(chunk)}}}\n\n"
-
+        answer = await inference_engine.generate_with_context(query, docs)
+        yield f"data: {{\"type\": \"chunk\", \"content\": {repr(answer)}}}\n\n"
         yield "data: {\"type\": \"done\", \"content\": null}\n\n"
 
     except Exception as e:

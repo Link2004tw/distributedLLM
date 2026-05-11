@@ -45,7 +45,7 @@ class WorkerState:
     consecutive_failures: int = 0
 
 
-MAX_CONSECUTIVE_FAILURES = 3
+MAX_CONSECUTIVE_FAILURES = 10
 
 
 @dataclass
@@ -72,8 +72,8 @@ workers: Dict[str, WorkerState] = {}
 routing_state = RoutingState()
 current_strategy: RoutingStrategy = RoutingStrategy.ROUND_ROBIN
 pending_requests: List[FailedRequest] = []
-MAX_REASSIGN_ATTEMPTS = 3
-MAX_CONCURRENT_REQUESTS = 50
+MAX_REASSIGN_ATTEMPTS = 5
+MAX_CONCURRENT_REQUESTS = 1000
 request_semaphore: Optional[asyncio.Semaphore] = None
 
 PERSISTENCE_FILE = Path(os.environ.get("PENDING_REQUESTS_FILE", "./pending_requests.json"))
@@ -144,8 +144,8 @@ class StrategyRequest(BaseModel):
 
 async def init_httpx():
     global httpx_client
-    limits = httpx.Limits(max_connections=100, max_keepalive_connections=50)
-    httpx_client = httpx.AsyncClient(timeout=120.0, limits=limits)
+    limits = httpx.Limits(max_connections=1000, max_keepalive_connections=500)
+    httpx_client = httpx.AsyncClient(timeout=300.0, limits=limits)
 
 
 async def close_httpx():
@@ -315,7 +315,7 @@ async def reassign_pending_requests():
             resp = await httpx_client.post(
                 f"{worker.url}/query",
                 json={"query": req.query, "top_k": req.top_k},
-                timeout=60.0
+                timeout=120.0
             )
             if resp.status_code == 200:
                 routing_state.reassigned_requests += 1
@@ -341,7 +341,7 @@ async def forward_to_worker(worker: WorkerState, query: str, top_k: int, exclude
             resp = await httpx_client.post(
                 f"{worker.url}/query",
                 json={"query": query, "top_k": top_k},
-                timeout=120.0
+                timeout=300.0
             )
             if resp.status_code == 200:
                 worker.active_connections += 1

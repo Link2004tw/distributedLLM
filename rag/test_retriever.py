@@ -1,11 +1,4 @@
-# import sys
-# from pathlib import Path
-
-# root_dir = Path(__file__).resolve().parent.parent
-
-# # 2. Add that root directory to sys.path so Python can "see" the llm folder
-# if str(root_dir) not in sys.path:
-#     sys.path.append(str(root_dir))
+import asyncio
 
 from rag.retriever import retriever
 from llm.inference import InferenceEngine
@@ -31,12 +24,13 @@ def test_retriever_only():
             print(f"      {doc[:120]}...")
 
 
-def test_full_rag():
+async def test_full_rag():
     print("\n" + "=" * 60)
     print("TEST 2: Full RAG (Retriever + LLM)")
     print("=" * 60)
 
     llm = InferenceEngine()
+    await llm.init_client()
 
     queries = [
         "What do hamsters eat?",
@@ -47,11 +41,13 @@ def test_full_rag():
     for query in queries:
         print(f"\nQuery: {query}")
         docs = retriever.retrieve(query, top_k=3)
-        response = llm.generate_with_context(query, docs)
+        response = await llm.generate_with_context(query, docs)
         print(f"Answer: {response}")
         print("-" * 40)
+
+    await llm.close()
 
 
 if __name__ == "__main__":
     test_retriever_only()
-    test_full_rag()
+    asyncio.run(test_full_rag())

@@ -309,7 +309,7 @@ def run_single_benchmark(label: str, workers: int, model: str,
     procs = []
 
     try:
-        nginx_conf_path = ROOT / "lb" / "nginx" / "conf" / "nginx.conf"
+        nginx_conf_path = ROOT / "lb" / "nginx.conf"
         if nginx_conf_path.exists():
             content = nginx_conf_path.read_text()
             if nginx_strategy == "least_connections":
@@ -319,6 +319,8 @@ def run_single_benchmark(label: str, workers: int, model: str,
             else:
                 content = content.replace("least_conn;", "# least_conn;")
             nginx_conf_path.write_text(content)
+            import shutil
+            shutil.copy2(str(nginx_conf_path), "/etc/nginx/nginx.conf")
             subprocess.run(["nginx", "-s", "reload"], capture_output=True, timeout=10)
         log(f"NGINX strategy: {nginx_strategy}")
 
