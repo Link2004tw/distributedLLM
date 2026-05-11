@@ -1,8 +1,8 @@
 import os
 import time
 import uuid
-import subprocess
-from typing import List, Optional
+from contextlib import asynccontextmanager
+from typing import List
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import httpx
@@ -11,7 +11,21 @@ from asyncio import Queue, gather
 from rag.retriever import retriever
 from llm.inference import inference_engine
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with httpx.AsyncClient() as client:
+        try:
+            await client.post(
+                f"{MASTER_NODE_URL}/register",
+                json={"worker_id": WORKER_ID, "port": WORKER_PORT},
+            )
+        except Exception:
+            pass
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 WORKER_ID = os.environ.get("WORKER_ID", f"worker-{uuid.uuid4().hex[:8]}")
 WORKER_PORT = int(os.environ.get("PORT", 8001))
@@ -38,6 +52,7 @@ class QueryRequest(BaseModel):
     top_k: int = 3
 
 
+<<<<<<< HEAD
 def get_gpu_info() -> dict:
     try:
         result = subprocess.run(
@@ -84,10 +99,17 @@ async def process_request_async(query: str, top_k: int, request_id: str) -> dict
             del embed_cache[oldest_key]
         embed_cache[embed_cache_key] = docs
 
+=======
+def process_request_sync(query: str, top_k: int) -> dict:
+    start_time = time.time()
+
+    docs = retriever.retrieve(query, top_k=top_k)
+>>>>>>> 9eb7debe6c27334b698668c54a696bc5ce3dc240
     answer = inference_engine.generate_with_context(query, docs)
 
     latency_ms = (time.time() - start_time) * 1000
 
+<<<<<<< HEAD
     result = {
         "answer": answer,
         "sources": docs,
@@ -116,6 +138,14 @@ async def startup_event():
         except Exception:
             pass
 
+=======
+    return {
+        "answer": answer,
+        "sources": docs,
+        "latency_ms": latency_ms,
+    }
+
+>>>>>>> 9eb7debe6c27334b698668c54a696bc5ce3dc240
 
 @app.post("/query")
 async def handle_query(request: QueryRequest):
@@ -136,6 +166,17 @@ async def handle_query(request: QueryRequest):
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         active_connections -= 1
+
+
+@app.get("/ready")
+async def ready_check():
+    try:
+        loop = __import__("asyncio").get_event_loop()
+        future = loop.run_in_executor(None, lambda: inference_engine.generate("ping"))
+        result = await __import__("asyncio").wait_for(future, timeout=15.0)
+        return {"ready": True, "worker_id": WORKER_ID}
+    except Exception as e:
+        return {"ready": False, "error": str(e)}
 
 
 @app.get("/health")

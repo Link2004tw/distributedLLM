@@ -4,8 +4,8 @@ from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
 
 
-EMBEDDING_MODEL = "nomic-embed-text:latest"
-CHROMA_DB_PATH = "./chroma_db"
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text:latest")
+CHROMA_DB_PATH = os.environ.get("CHROMA_DB_PATH", "./chroma_db")
 COLLECTION_NAME = "documents"
 
 
