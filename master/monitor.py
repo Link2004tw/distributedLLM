@@ -35,6 +35,7 @@ async def register_worker(worker_id: str, port: int, host: str = "localhost"):
         avg_latency_ms=0.0,
         last_heartbeat=time.time(),
     )
+    asyncio.create_task(notify_load_balancer_worker_added(worker_id, host, port))
 
 
 async def heartbeat_monitor():
@@ -65,6 +66,17 @@ async def notify_load_balancer(worker_id: str):
         async with httpx.AsyncClient() as client:
             await client.post(
                 f"{LOAD_BALANCER_URL}/worker/unhealthy", json={"worker_id": worker_id}
+            )
+    except Exception:
+        pass
+
+
+async def notify_load_balancer_worker_added(worker_id: str, host: str, port: int):
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{LOAD_BALANCER_URL}/workers/add",
+                json={"worker_id": worker_id, "host": host, "port": port}
             )
     except Exception:
         pass

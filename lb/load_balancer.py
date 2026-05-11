@@ -2,7 +2,7 @@ import os
 import asyncio
 import time
 import httpx
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 from dataclasses import dataclass, field
 from enum import Enum
 from fastapi import FastAPI, HTTPException
@@ -24,6 +24,7 @@ class RoutingStrategy(str, Enum):
     LEAST_CONNECTIONS = "least_connections"
     HYBRID = "hybrid"
     GPU_AWARE = "gpu_aware"
+    CAPACITY_AWARE = "capacity_aware"
 
 
 @dataclass
@@ -34,11 +35,15 @@ class WorkerState:
     url: str
     healthy: bool = True
     active_connections: int = 0
+    queue_available: int = 50
     avg_latency_ms: float = 0.0
     gpu_utilization: int = 0
     gpu_memory_mb: int = 0
     last_health_check: float = 0.0
     consecutive_failures: int = 0
+
+
+MAX_CONSECUTIVE_FAILURES = 3
 
 
 @dataclass
@@ -47,11 +52,24 @@ class RoutingState:
     hybrid_rr_index: int = 0
     total_requests: int = 0
     failed_requests: int = 0
+    reassigned_requests: int = 0
+
+
+@dataclass
+class FailedRequest:
+    query: str
+    top_k: int
+    attempts: int = 0
+    failed_workers: Set[str] = field(default_factory=set)
 
 
 workers: Dict[str, WorkerState] = {}
 routing_state = RoutingState()
 current_strategy: RoutingStrategy = RoutingStrategy.ROUND_ROBIN
+pending_requests: List[FailedRequest] = []
+MAX_REASSIGN_ATTEMPTS = 3
+MAX_CONCURRENT_REQUESTS = 50
+request_semaphore: Optional[asyncio.Semaphore] = None
 
 
 class QueryRequest(BaseModel):
@@ -82,6 +100,7 @@ async def check_worker_health(worker: WorkerState) -> bool:
         if resp.status_code == 200:
             data = resp.json()
             worker.active_connections = data.get("active_connections", 0)
+            worker.queue_available = data.get("queue_available", 50)
             worker.avg_latency_ms = data.get("avg_latency_ms", 0.0)
             worker.gpu_utilization = data.get("gpu_utilization", 0)
             worker.gpu_memory_mb = data.get("gpu_memory_used_mb", 0)
@@ -149,13 +168,27 @@ def select_gpu_aware() -> Optional[WorkerState]:
         util = w.gpu_utilization
         mem = w.gpu_memory_mb
         conn = w.active_connections
+        queue = max(1, w.queue_available)
 
         mem_ratio = mem / max(w.gpu_memory_mb, 1)
         conn_factor = conn * 10
+        queue_factor = (100 - queue) * 2
 
-        return util + (mem_ratio * 50) + conn_factor
+        return util + (mem_ratio * 50) + conn_factor + queue_factor
 
     return min(healthy, key=gpu_score)
+
+
+def select_capacity_aware() -> Optional[WorkerState]:
+    healthy = get_healthy_workers()
+    if not healthy:
+        return None
+
+    def capacity_score(w: WorkerState) -> float:
+        conn_ratio = w.active_connections / max(w.queue_available, 1)
+        return conn_ratio
+
+    return min(healthy, key=capacity_score)
 
 
 def select_worker() -> Optional[WorkerState]:
@@ -167,10 +200,78 @@ def select_worker() -> Optional[WorkerState]:
         return select_hybrid()
     elif current_strategy == RoutingStrategy.GPU_AWARE:
         return select_gpu_aware()
+    elif current_strategy == RoutingStrategy.CAPACITY_AWARE:
+        return select_capacity_aware()
     return select_round_robin()
 
 
-async def forward_to_worker(worker: WorkerState, query: str, top_k: int) -> dict:
+def mark_worker_unhealthy(worker_id: str):
+    if worker_id in workers:
+        workers[worker_id].healthy = False
+        asyncio.create_task(reassign_pending_requests())
+
+
+async def reassign_pending_requests():
+    global pending_requests
+    if not pending_requests:
+        return
+
+    still_pending = []
+    for req in pending_requests:
+        healthy = [w for w in workers.values() if w.healthy and w.worker_id not in req.failed_workers]
+        if not healthy:
+            still_pending.append(req)
+            continue
+
+        if current_strategy == RoutingStrategy.ROUND_ROBIN:
+            idx = routing_state.round_robin_index % len(healthy)
+            routing_state.round_robin_index += 1
+            worker = healthy[idx]
+        elif current_strategy == RoutingStrategy.LEAST_CONNECTIONS:
+            worker = min(healthy, key=lambda w: w.active_connections)
+        elif current_strategy == RoutingStrategy.HYBRID:
+            min_conn = min(w.active_connections for w in healthy)
+            least_busy = [w for w in healthy if w.active_connections == min_conn]
+            idx = routing_state.hybrid_rr_index % len(least_busy)
+            routing_state.hybrid_rr_index += 1
+            worker = least_busy[idx]
+        elif current_strategy == RoutingStrategy.GPU_AWARE:
+            def gpu_score(w: WorkerState) -> float:
+                util = w.gpu_utilization
+                mem = w.gpu_memory_mb
+                conn = w.active_connections
+                mem_ratio = mem / max(w.gpu_memory_mb, 1)
+                return util + (mem_ratio * 50) + (conn * 10)
+            worker = min(healthy, key=gpu_score)
+        elif current_strategy == RoutingStrategy.CAPACITY_AWARE:
+            worker = min(healthy, key=lambda w: w.active_connections / max(w.queue_available, 1))
+        else:
+            worker = healthy[0]
+
+        try:
+            resp = await httpx_client.post(
+                f"{worker.url}/query",
+                json={"query": req.query, "top_k": req.top_k},
+                timeout=60.0
+            )
+            if resp.status_code == 200:
+                routing_state.reassigned_requests += 1
+                continue
+        except Exception:
+            pass
+
+        req.attempts += 1
+        req.failed_workers.add(worker.worker_id)
+        if req.attempts < MAX_REASSIGN_ATTEMPTS:
+            still_pending.append(req)
+
+    pending_requests = still_pending
+
+
+async def forward_to_worker(worker: WorkerState, query: str, top_k: int, exclude_workers: Set[str] = None) -> dict:
+    exclude_set = exclude_workers or set()
+    last_error = None
+
     for attempt in range(MAX_RETRIES):
         try:
             resp = await httpx_client.post(
@@ -185,24 +286,66 @@ async def forward_to_worker(worker: WorkerState, query: str, top_k: int) -> dict
                 await asyncio.sleep(RETRY_DELAY * (attempt + 1))
                 continue
             else:
-                raise HTTPException(status_code=resp.status_code, detail=resp.text)
+                last_error = HTTPException(status_code=resp.status_code, detail=resp.text)
         except httpx.TimeoutException:
+            last_error = HTTPException(status_code=504, detail="Worker timeout")
             if attempt < MAX_RETRIES - 1:
                 await asyncio.sleep(RETRY_DELAY * (attempt + 1))
                 continue
-            raise HTTPException(status_code=504, detail="Worker timeout")
         except Exception as e:
+            last_error = e
             if attempt < MAX_RETRIES - 1:
                 await asyncio.sleep(RETRY_DELAY * (attempt + 1))
                 continue
-            raise HTTPException(status_code=500, detail=str(e))
 
-    raise HTTPException(status_code=503, detail="All retries failed")
+    worker.consecutive_failures += 1
+    if worker.consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+        mark_worker_unhealthy(worker.worker_id)
+
+    healthy = [w for w in workers.values() if w.healthy and w.worker_id not in exclude_set]
+    if healthy:
+        if current_strategy == RoutingStrategy.ROUND_ROBIN:
+            idx = routing_state.round_robin_index % len(healthy)
+            routing_state.round_robin_index += 1
+            alt_worker = healthy[idx]
+        elif current_strategy == RoutingStrategy.LEAST_CONNECTIONS:
+            alt_worker = min(healthy, key=lambda w: w.active_connections)
+        elif current_strategy == RoutingStrategy.HYBRID:
+            min_conn = min(w.active_connections for w in healthy)
+            least_busy = [w for w in healthy if w.active_connections == min_conn]
+            idx = routing_state.hybrid_rr_index % len(least_busy)
+            routing_state.hybrid_rr_index += 1
+            alt_worker = least_busy[idx]
+        elif current_strategy == RoutingStrategy.GPU_AWARE:
+            def gpu_score(w: WorkerState) -> float:
+                util = w.gpu_utilization
+                mem = w.gpu_memory_mb
+                conn = w.active_connections
+                mem_ratio = mem / max(w.gpu_memory_mb, 1)
+                return util + (mem_ratio * 50) + (conn * 10)
+            alt_worker = min(healthy, key=gpu_score)
+        elif current_strategy == RoutingStrategy.CAPACITY_AWARE:
+            alt_worker = min(healthy, key=lambda w: w.active_connections / max(w.queue_available, 1))
+        else:
+            alt_worker = healthy[0]
+
+        exclude_set.add(worker.worker_id)
+        try:
+            return await forward_to_worker(alt_worker, query, top_k, exclude_set)
+        except Exception:
+            pass
+
+    pending_requests.append(FailedRequest(query=query, top_k=top_k, attempts=1, failed_workers=exclude_set))
+    if last_error and isinstance(last_error, HTTPException):
+        raise last_error
+    raise HTTPException(status_code=503, detail="All retries and reassignments failed")
 
 
 @app.on_event("startup")
 async def startup():
+    global request_semaphore
     await init_httpx()
+    request_semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
     default_workers = [
         ("worker-1", "localhost", 8001),
@@ -219,6 +362,7 @@ async def startup():
         )
 
     asyncio.create_task(health_check_loop())
+    asyncio.create_task(pending_retry_loop())
 
 
 @app.on_event("shutdown")
@@ -236,7 +380,8 @@ async def handle_query(request: QueryRequest):
         raise HTTPException(status_code=503, detail="No healthy workers available")
 
     try:
-        result = await forward_to_worker(worker, request.query, request.top_k)
+        async with request_semaphore:
+            result = await forward_to_worker(worker, request.query, request.top_k)
         worker.active_connections = max(0, worker.active_connections - 1)
         return result
     except Exception as e:
@@ -312,9 +457,18 @@ async def get_stats():
         "current_strategy": current_strategy.value,
         "total_requests": routing_state.total_requests,
         "failed_requests": routing_state.failed_requests,
+        "reassigned_requests": routing_state.reassigned_requests,
+        "pending_requests": len(pending_requests),
         "avg_gpu_utilization": sum(w.gpu_utilization for w in healthy) / len(healthy) if healthy else 0,
         "total_active_connections": sum(w.active_connections for w in workers.values()),
     }
+
+
+async def pending_retry_loop():
+    while True:
+        await asyncio.sleep(5)
+        if pending_requests:
+            await reassign_pending_requests()
 
 
 @app.get("/health")

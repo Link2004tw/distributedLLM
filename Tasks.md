@@ -9,95 +9,55 @@
 
 ## Tasks
 
-### Phase 1: Core Infrastructure (Original)
+### High Priority
+1. [x] True Concurrent Request Handling - Semaphore-based backpressure in both LB and worker
+2. [x] Automatic Task Reassignment - LB retry logic + Master health detection
+3. [x] Worker Auto-Registration - Master notifies LB when workers register
+4. [ ] 1000+ Concurrent Users Testing - Full stress test from 100 to 1000 users
 
-| # | Task | Difficulty |
-|---|------|------------|
-| 1 | Create `workers/gpu_worker.py` - GPUWorker class with RAG + LLM pipeline | Medium |
-| 2 | Refactor `lb/load_balancer.py` to FastAPI with Round Robin + Least Connections + Hybrid strategies | High |
-| 3 | Implement Hybrid routing (Least Connections primary + RR tiebreaker) | High |
-| 4 | Add runtime strategy switching endpoint to LB (`GET /strategy`, `POST /strategy`) | Medium |
-| 5 | Add retry logic on worker failure in LB | Medium |
-| 6 | Create `dashboard/` - Admin dashboard hitting Master `/metrics` and `/workers` APIs | Medium |
-| 7 | Write automated fault tolerance test (kill a worker mid-test) | High |
-| 8 | Smoke test all components with 10 manual requests | Low |
-| 9 | Load test at 100/500/1000 users with metrics collection | High |
+### Medium Priority
+5. [x] Graceful Degradation - Fallback response when Ollama fails (worker.py)
+6. [x] Batch Processing Optimization - True batch grouping before LLM call with embedding batch API
+7. [ ] Comprehensive Metrics - P95/P99 latency, detailed throughput, dashboard integration
 
-### Phase 2: GPU Optimization
+### Low Priority
+8. [ ] Response Streaming - Stream LLM responses to client via SSE
+9. [ ] Task Queue Persistence - Persist queue to disk for crash recovery
 
-| # | Task | Difficulty | Status |
-|---|------|------------|--------|
-| 10 | Verify Ollama GPU mode works (nvidia-smi check) | Low | [x] |
-| 11 | Add GPU monitoring to worker `/health` endpoint (nvidia-smi parsing) | Medium | [x] |
-| 12 | Create `GPUWorker` class with batch processing (batch size 10-20) | High | [x] |
-| 13 | Add LRU cache for embeddings (500 items) | Medium | [x] |
-| 14 | Add response cache for duplicate queries (500 items) | Medium | [x] |
-| 15 | Replace ThreadPoolExecutor with asyncio (2 async tasks per worker) | Medium | [x] |
-| 16 | Add concurrent Ollama client with connection pooling | Medium | [x] |
-| 17 | Add batch embedding queue (flush every 100ms) | High | [x] |
-| 18 | Add batch inference queue (flush every 100ms) | High | [x] |
-| 19 | Refactor LB to FastAPI (replace NGINX, async routing) | High | [x] |
-| 20 | Add GPU-aware routing to LB | High | [x] |
-| 21 | Add response streaming support | Medium | [ ] |
-
-### Phase 3: GPU Worker Files Created
-
-| File | Description |
-|------|-------------|
-| `workers/gpu_worker.py` | Main GPU-accelerated worker with FastAPI |
-| `workers/gpu_utils.py` | GPU detection and monitoring utilities |
-| `llm/gpu_inference.py` | Ollama client, batch processor, LRU cache |
-
-### Phase 4: FastAPI Load Balancer (Completed)
-
-| File | Description |
-|------|-------------|
-| `lb/load_balancer.py` | Async FastAPI LB with 4 routing strategies |
-
-### Phase 5: Test Suite
-
-| File | Description |
-|------|-------------|
-| `tests/conftest.py` | Shared pytest fixtures |
-| `tests/test_gpu_worker.py` | GPU worker endpoint tests |
-| `tests/test_load_balancer.py` | Load balancer tests |
-| `tests/test_ollama.py` | Ollama integration tests |
-| `tests/run_tests.bat` | Windows test runner |
-| `requests/*.http` | REST client request files |
+### Already Completed
+- [x] Load Balancing (Round Robin, Least Connections, Hybrid, GPU-aware)
+- [x] Worker Nodes (LangChain-based with all endpoints: /gpu-stats, /capabilities, /batch, /ready, /fallback, /health)
+- [x] LLM Inference (Ollama + LangChain)
+- [x] RAG Integration (ChromaDB + Retriever)
+- [x] Health Checks & Failure Detection (Master heartbeats + LB notification)
+- [x] Dashboard (FastAPI + Jinja2)
+- [x] Master/Scheduler (worker registration + health monitoring)
+- [x] Worker Warmup on Startup
+- [x] Thread-safe concurrency (asyncio locks on active_connections + latencies)
 
 ---
 
-## Implementation Order (Recommended)
+## What's Left (Priority Order)
 
-1. Verify Ollama GPU mode (DONE)
-2. Add GPU monitoring to `/health` endpoint
-3. Create `GPUWorker` class with batch processing
-4. Add caching layer (embeddings + responses)
-5. Replace ThreadPool with asyncio
-6. Refactor LB to FastAPI
-7. Add GPU-aware routing
-8. Add streaming support
+### 1. Batch Processing Optimization (Medium)
+- `/query/batch` currently just fires `asyncio.gather()` on all queries individually
+- Should group queries by similar characteristics and batch to Ollama
+- Ollama has a `/api/generate` that can be called once per batch with combined prompt
 
----
+### 2. 1000+ Concurrent Users Testing (High)
+- Full stress test: 100 → 500 → 1000 users
+- Measure latency, throughput, error rate
+- Identify bottlenecks
 
-## Configuration
+### 3. Comprehensive Metrics (Medium)
+- P95/P99 latency in LB stats
+- Dashboard real-time metrics
+- Per-worker throughput tracking
 
-| Setting | Value |
-|---------|-------|
-| GPU | RTX 3060 Laptop (6GB VRAM) |
-| Workers | 4-6 (using gpu_worker.py) |
-| Max Concurrent | 2 async tasks per worker |
-| Batch size | 10 |
-| Cache size | 500 items (LRU) |
-| Ollama port | 11434 |
-| LLM Model | smollm2:135m |
+### 4. Response Streaming (Low)
+- SSE endpoint for streaming LLM tokens
+- Chain streaming with RAG retrieval first
 
-## GPU Worker Endpoints
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /health` | GPU utilization, memory, cache stats |
-| `GET /gpu-stats` | Detailed GPU metrics (util, memory, temp, power) |
-| `POST /query` | Single query with caching |
-| `POST /query/batch` | Batch query processing |
-| `GET /capabilities` | Worker capabilities |
+### 5. Task Queue Persistence (Low)
+- Persist pending requests to disk
+- Recovery on crash/restart

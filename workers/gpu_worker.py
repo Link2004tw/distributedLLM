@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from llm.gpu_inference import GPUInferenceEngine, ollama_client, LRU_Cache
+from rag.retriever import Retriever
 from workers.gpu_utils import set_gpu_environment
 from workers.gpu_utils import get_gpu_info as _get_gpu_info
 
@@ -33,6 +34,7 @@ CACHE_SIZE = 500
 
 httpx_client: Optional[httpx.AsyncClient] = None
 gpu_engine: Optional[GPUInferenceEngine] = None
+retriever: Optional[Retriever] = None
 embed_cache: Optional[LRU_Cache] = None
 response_cache: Optional[LRU_Cache] = None
 active_connections = 0
@@ -56,10 +58,11 @@ class QueryResult:
     sources: List[str]
     latency_ms: float
     cache_hit: bool
+    retrieval_time_ms: float = 0.0
 
 
 async def init_services():
-    global httpx_client, gpu_engine, embed_cache, response_cache
+    global httpx_client, gpu_engine, retriever, embed_cache, response_cache
 
     set_gpu_environment()
 
@@ -68,6 +71,9 @@ async def init_services():
 
     gpu_engine = GPUInferenceEngine(ollama_url=OLLAMA_URL, batch_size=BATCH_SIZE, cache_size=CACHE_SIZE)
     await gpu_engine.initialize()
+
+    retriever = Retriever()
+    retriever.set_base_url(OLLAMA_URL)
 
     embed_cache = LRU_Cache(max_size=CACHE_SIZE)
     response_cache = LRU_Cache(max_size=CACHE_SIZE)
@@ -83,34 +89,36 @@ async def close_services():
 
 def make_cache_key(query: str, top_k: int) -> str:
     normalized = query.lower().strip()[:200]
-    return f"{hash(normalized)}:{top_k}"
+    return f"response:{hash(normalized)}:{top_k}"
 
 
 def make_embed_key(query: str) -> str:
-    return hash(query.lower().strip()[:200])
+    return f"embed:{hash(query.lower().strip()[:200])}"
 
 
 async def retrieve_docs(query: str, top_k: int) -> List[str]:
     embed_key = make_embed_key(query)
-    cached_docs = embed_cache.get(embed_key)
-    if cached_docs is not None:
-        return cached_docs
+    
+    if embed_cache:
+        cached_docs = embed_cache.get(embed_key)
+        if cached_docs is not None:
+            return cached_docs
 
     try:
-        resp = await httpx_client.post(
-            f"{OLLAMA_URL}/api/embeddings",
-            json={"model": "nomic-embed-text:latest", "prompt": query}
+        loop = asyncio.get_event_loop()
+        docs = await loop.run_in_executor(
+            None, retriever.retrieve, query, top_k
         )
-        if resp.status_code == 200:
-            docs = [f"Document chunk for: {query[:100]}", f"Related: {query[50:150]}"]
-            embed_cache.set(embed_key, docs)
+        
+        if docs and len(docs) > 0:
+            if embed_cache:
+                embed_cache.set(embed_key, docs)
             return docs
-    except Exception:
-        pass
-
-    docs = [f"Document: {query[:100]}..."]
-    embed_cache.set(embed_key, docs)
-    return docs
+        else:
+            return []
+    except Exception as e:
+        print(f"RAG retrieval error: {e}")
+        return []
 
 
 async def process_single_query(query: str, top_k: int, user_id: str) -> QueryResult:
@@ -124,21 +132,47 @@ async def process_single_query(query: str, top_k: int, user_id: str) -> QueryRes
             answer=cached_result["answer"],
             sources=cached_result["sources"],
             latency_ms=latency_ms,
-            cache_hit=True
+            cache_hit=True,
+            retrieval_time_ms=0.0
         )
 
     docs = await retrieve_docs(query, top_k)
-    answer = await gpu_engine.generate(query, docs, use_cache=True)
+    retrieval_time = (time.time() - start_time) * 1000
+    
+    if not docs or len(docs) == 0:
+        answer = "I don't have relevant documents to answer this question. Please try a different query."
+    else:
+        context = "\n\n".join(docs)
+        prompt = f"""Context information:
+{context}
+
+Question: {query}
+
+Answer based on the context above:"""
+        try:
+            result = await gpu_engine.client.generate(prompt=prompt, stream=False)
+            answer = result.get("response", "")
+        except Exception as e:
+            print(f"LLM inference error: {e}")
+            return QueryResult(
+                answer="Service temporarily unavailable. Please retry.",
+                sources=docs,
+                latency_ms=(time.time() - start_time) * 1000,
+                cache_hit=False,
+                retrieval_time_ms=retrieval_time,
+            )
 
     latency_ms = (time.time() - start_time) * 1000
 
-    response_cache.set(cache_key, {"answer": answer, "sources": docs})
+    if docs and len(docs) > 0:
+        response_cache.set(cache_key, {"answer": answer, "sources": docs})
 
     return QueryResult(
         answer=answer,
-        sources=docs,
+        sources=docs if docs else [],
         latency_ms=latency_ms,
-        cache_hit=False
+        cache_hit=False,
+        retrieval_time_ms=retrieval_time
     )
 
 
@@ -194,15 +228,29 @@ async def handle_query(request: QueryRequest):
         avg_latency_ms = sum(latencies) / len(latencies)
 
         return {
+            "worker_id": WORKER_ID,
             "answer": result.answer,
             "sources": result.sources,
             "latency_ms": result.latency_ms,
+            "retrieval_time_ms": result.retrieval_time_ms,
             "cache_hit": result.cache_hit
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         active_connections -= 1
+
+
+@app.post("/query/fallback")
+async def handle_fallback_query(request: QueryRequest):
+    return {
+        "worker_id": WORKER_ID,
+        "answer": "Service temporarily unavailable. Please retry.",
+        "sources": [],
+        "latency_ms": 0,
+        "retrieval_time_ms": 0,
+        "cache_hit": False,
+    }
 
 
 @app.post("/query/batch")

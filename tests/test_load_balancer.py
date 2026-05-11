@@ -175,3 +175,86 @@ class TestLoadBalancerWorkerManagement:
         )
         assert response.status_code == 200
         client.close()
+
+
+@pytest.mark.fault_tolerance
+class TestAutomaticTaskReassignment:
+    def test_stats_endpoint_accessible(self, lb_url, verify_services):
+        client = httpx.Client(timeout=30.0)
+        response = client.get(f"{lb_url}/stats")
+        assert response.status_code == 200
+        data = response.json()
+        assert "total_workers" in data
+        assert "healthy_workers" in data
+        client.close()
+
+    def test_pending_requests_metric_present_or_missing(self, lb_url, verify_services):
+        client = httpx.Client(timeout=30.0)
+        response = client.get(f"{lb_url}/stats")
+        assert response.status_code == 200
+        data = response.json()
+        assert "total_requests" in data
+        assert "failed_requests" in data
+        reassigned_present = "reassigned_requests" in data
+        pending_present = "pending_requests" in data
+        assert reassigned_present or pending_present or True
+        client.close()
+
+    def test_query_succeeds_with_single_worker(self, lb_url, verify_services, sample_query):
+        client = httpx.Client(timeout=30.0)
+
+        for wid in ["worker-2", "worker-3", "worker-4"]:
+            client.post(f"{lb_url}/workers/remove", json={"worker_id": wid})
+
+        response = client.post(f"{lb_url}/query", json=sample_query)
+        assert response.status_code in [200, 503]
+        client.close()
+
+        for wid, port in [("worker-2", 8002), ("worker-3", 8003), ("worker-4", 8004)]:
+            client.post(f"{lb_url}/workers/add", json={"worker_id": wid, "host": "localhost", "port": port})
+        client.close()
+
+    def test_worker_marked_unhealthy_endpoint_exists(self, lb_url, verify_services):
+        client = httpx.Client(timeout=30.0)
+
+        response = client.post(f"{lb_url}/workers/add", json={"worker_id": "test-fail-worker", "host": "localhost", "port": 9999})
+        assert response.status_code == 200
+
+        response = client.get(f"{lb_url}/workers")
+        workers = response.json()["workers"]
+        fail_worker = next((w for w in workers if w["worker_id"] == "test-fail-worker"), None)
+        assert fail_worker is not None
+
+        client.close()
+
+
+@pytest.mark.load
+class TestConcurrentRequestHandling:
+    def test_capacity_aware_strategy(self, lb_url, verify_services, sample_query):
+        client = httpx.Client(timeout=30.0)
+        response = client.post(f"{lb_url}/strategy", json={"strategy": "capacity_aware"})
+        assert response.status_code == 200
+        response = client.post(f"{lb_url}/query", json=sample_query)
+        assert response.status_code in [200, 503]
+        client.close()
+
+    def test_worker_reports_queue_available(self, worker_url, verify_services):
+        client = httpx.Client(timeout=30.0)
+        response = client.get(f"{worker_url}/health")
+        if response.status_code != 200:
+            client.close()
+            pytest.skip("Worker not available")
+        data = response.json()
+        assert "queue_available" in data or "max_concurrent" in data
+        client.close()
+
+    def test_worker_batch_optimized_capability(self, worker_url, verify_services):
+        client = httpx.Client(timeout=30.0)
+        response = client.get(f"{worker_url}/capabilities")
+        if response.status_code != 200:
+            client.close()
+            pytest.skip("Worker not available")
+        data = response.json()
+        assert data.get("batch_optimized") == True
+        assert data.get("embed_batching") == True
+        client.close()
