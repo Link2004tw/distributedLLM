@@ -54,6 +54,17 @@
 |------|-------------|
 | `lb/load_balancer.py` | Async FastAPI LB with 4 routing strategies |
 
+### Phase 5: Test Suite
+
+| File | Description |
+|------|-------------|
+| `tests/conftest.py` | Shared pytest fixtures |
+| `tests/test_gpu_worker.py` | GPU worker endpoint tests |
+| `tests/test_load_balancer.py` | Load balancer tests |
+| `tests/test_ollama.py` | Ollama integration tests |
+| `tests/run_tests.bat` | Windows test runner |
+| `requests/*.http` | REST client request files |
+
 ---
 
 ## Implementation Order (Recommended)

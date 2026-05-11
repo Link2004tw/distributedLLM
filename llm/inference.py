@@ -20,6 +20,11 @@ class InferenceEngine:
             kwargs["num_batch"] = int(OLLAMA_BATCH_SIZE)
         self.llm = OllamaLLM(**kwargs)
 
+    def set_base_url(self, url: str):
+        from langchain_ollama import OllamaLLM
+        kwargs = {"model": self.llm.model, "base_url": url}
+        self.llm = OllamaLLM(**kwargs)
+
     def generate(self, prompt: str, streaming: bool = False):
         if streaming:
             return self.llm.stream(prompt)

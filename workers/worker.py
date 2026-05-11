@@ -1,24 +1,52 @@
 import os
 import time
 import uuid
+import subprocess
 from contextlib import asynccontextmanager
 from typing import List
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import httpx
-from asyncio import Queue, gather
+from asyncio import Queue
 
 from rag.retriever import retriever
 from llm.inference import inference_engine
 
 
+WORKER_ID = os.environ.get("WORKER_ID", f"worker-{uuid.uuid4().hex[:8]}")
+WORKER_PORT = int(os.environ.get("PORT", 8001))
+MASTER_NODE_URL = os.environ.get("MASTER_NODE_URL", "http://localhost:9000")
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")  # <-- new
+
+MAX_QUEUE_SIZE = 100
+BATCH_SIZE = 10
+BATCH_TIMEOUT_MS = 100
+MAX_CONCURRENT_TASKS = 2
+CACHE_SIZE = 500
+
+query_queue: Queue = None
+active_connections = 0
+avg_latency_ms = 0.0
+latencies: List[float] = []
+embed_cache: dict = {}
+response_cache: dict = {}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Pass OLLAMA_URL to inference engine so it hits the right instance
+    inference_engine.set_base_url(OLLAMA_URL)
+    retriever.set_base_url(OLLAMA_URL)  # if retriever also uses Ollama for embeddings
+
     async with httpx.AsyncClient() as client:
         try:
             await client.post(
                 f"{MASTER_NODE_URL}/register",
-                json={"worker_id": WORKER_ID, "port": WORKER_PORT},
+                json={
+                    "worker_id": WORKER_ID,
+                    "port": WORKER_PORT,
+                    "ollama_url": OLLAMA_URL,
+                },
             )
         except Exception:
             pass
@@ -27,24 +55,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-WORKER_ID = os.environ.get("WORKER_ID", f"worker-{uuid.uuid4().hex[:8]}")
-WORKER_PORT = int(os.environ.get("PORT", 8001))
-MASTER_NODE_URL = "http://localhost:9000"
-CUDA_VISIBLE_DEVICES = os.environ.get("CUDA_VISIBLE_DEVICES", "0")
-
-MAX_QUEUE_SIZE = 100
-BATCH_SIZE = 10
-BATCH_TIMEOUT_MS = 100
-MAX_CONCURRENT_TASKS = 2
-
-query_queue: Queue = None
-active_connections = 0
-avg_latency_ms = 0.0
-latencies: List[float] = []
-embed_cache: dict = {}
-response_cache: dict = {}
-CACHE_SIZE = 500
-
 
 class QueryRequest(BaseModel):
     query: str
@@ -52,15 +62,12 @@ class QueryRequest(BaseModel):
     top_k: int = 3
 
 
-<<<<<<< HEAD
 def get_gpu_info() -> dict:
     try:
         result = subprocess.run(
             ["nvidia-smi", "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu",
              "--format=csv,noheader,nounits"],
-            capture_output=True,
-            text=True,
-            timeout=5
+            capture_output=True, text=True, timeout=5
         )
         if result.returncode == 0:
             parts = result.stdout.strip().split(", ")
@@ -84,42 +91,33 @@ async def process_request_async(query: str, top_k: int, request_id: str) -> dict
 
     cache_key = get_cache_key(query, top_k)
     if cache_key in response_cache:
-        cached = response_cache[cache_key]
+        cached = response_cache[cache_key].copy()
         cached["latency_ms"] = (time.time() - start_time) * 1000
         cached["cache_hit"] = True
         return cached
 
-    embed_cache_key = query
-    if embed_cache_key in embed_cache:
-        docs = embed_cache[embed_cache_key]
+    if query in embed_cache:
+        docs = embed_cache[query]
     else:
         docs = retriever.retrieve(query, top_k=top_k)
         if len(embed_cache) >= CACHE_SIZE:
-            oldest_key = next(iter(embed_cache))
-            del embed_cache[oldest_key]
-        embed_cache[embed_cache_key] = docs
+            del embed_cache[next(iter(embed_cache))]
+        embed_cache[query] = docs
 
-=======
-def process_request_sync(query: str, top_k: int) -> dict:
-    start_time = time.time()
-
-    docs = retriever.retrieve(query, top_k=top_k)
->>>>>>> 9eb7debe6c27334b698668c54a696bc5ce3dc240
     answer = inference_engine.generate_with_context(query, docs)
-
     latency_ms = (time.time() - start_time) * 1000
 
-<<<<<<< HEAD
     result = {
         "answer": answer,
         "sources": docs,
         "latency_ms": latency_ms,
-        "cache_hit": False
+        "cache_hit": False,
+        "worker_id": WORKER_ID,
+        "ollama_url": OLLAMA_URL,
     }
 
     if len(response_cache) >= CACHE_SIZE:
-        oldest_key = next(iter(response_cache))
-        del response_cache[oldest_key]
+        del response_cache[next(iter(response_cache))]
     response_cache[cache_key] = result
 
     return result
@@ -129,38 +127,19 @@ def process_request_sync(query: str, top_k: int) -> dict:
 async def startup_event():
     global query_queue
     query_queue = Queue(maxsize=MAX_QUEUE_SIZE)
-    async with httpx.AsyncClient() as client:
-        try:
-            await client.post(
-                f"{MASTER_NODE_URL}/register",
-                json={"worker_id": WORKER_ID, "port": WORKER_PORT},
-            )
-        except Exception:
-            pass
 
-=======
-    return {
-        "answer": answer,
-        "sources": docs,
-        "latency_ms": latency_ms,
-    }
-
->>>>>>> 9eb7debe6c27334b698668c54a696bc5ce3dc240
 
 @app.post("/query")
 async def handle_query(request: QueryRequest):
     global active_connections, avg_latency_ms, latencies
 
     active_connections += 1
-
     try:
         result = await process_request_async(request.query, request.top_k, request.user_id)
-
         latencies.append(result["latency_ms"])
         if len(latencies) > 100:
             latencies = latencies[-100:]
         avg_latency_ms = sum(latencies) / len(latencies)
-
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -174,9 +153,9 @@ async def ready_check():
         loop = __import__("asyncio").get_event_loop()
         future = loop.run_in_executor(None, lambda: inference_engine.generate("ping"))
         result = await __import__("asyncio").wait_for(future, timeout=15.0)
-        return {"ready": True, "worker_id": WORKER_ID}
+        return {"ready": True, "worker_id": WORKER_ID, "ollama_url": OLLAMA_URL}
     except Exception as e:
-        return {"ready": False, "error": str(e)}
+        return {"ready": False, "error": str(e), "ollama_url": OLLAMA_URL}
 
 
 @app.get("/health")
@@ -184,6 +163,7 @@ async def health_check():
     gpu_info = get_gpu_info()
     return {
         "worker_id": WORKER_ID,
+        "ollama_url": OLLAMA_URL,
         "healthy": True,
         "active_connections": active_connections,
         "avg_latency_ms": avg_latency_ms,
@@ -198,4 +178,4 @@ async def health_check():
 
 @app.get("/worker-id")
 async def get_worker_id():
-    return {"worker_id": WORKER_ID}
+    return {"worker_id": WORKER_ID, "ollama_url": OLLAMA_URL}

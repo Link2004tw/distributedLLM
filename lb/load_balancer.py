@@ -145,9 +145,9 @@ def select_gpu_aware() -> Optional[WorkerState]:
     if not healthy:
         return None
 
-    for w in healthy:
-        if w.gpu_memory_mb < 5000 and w.gpu_utilization < 80:
-            return w
+    available = [w for w in healthy if w.gpu_memory_mb < 5000 and w.gpu_utilization < 80]
+    if available:
+        return available[0]
 
     return min(healthy, key=lambda w: (w.gpu_utilization, w.gpu_memory_mb))
 

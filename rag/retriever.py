@@ -20,6 +20,18 @@ class Retriever:
             collection_name=COLLECTION_NAME,
         )
 
+    def set_base_url(self, url: str):
+        from langchain_ollama import OllamaEmbeddings
+        self.embeddings = OllamaEmbeddings(
+            model=self.embeddings.model,
+            base_url=url,
+        )
+        self.db = Chroma(
+            persist_directory=CHROMA_DB_PATH,
+            embedding_function=self.embeddings,
+            collection_name=COLLECTION_NAME,
+        )
+
     def retrieve(self, query: str, top_k: int = 3) -> List[str]:
         docs = self.db.similarity_search(query, k=top_k)
         return [doc.page_content for doc in docs]

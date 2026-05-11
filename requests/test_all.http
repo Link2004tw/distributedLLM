@@ -1,0 +1,64 @@
+### Test All Services
+@worker = http://127.0.0.1:8001
+@lb = http://127.0.0.1:8000
+
+### 1. Worker Health
+GET {{worker}}/health
+
+### 2. Worker GPU Stats
+GET {{worker}}/gpu-stats
+
+### 3. Load Balancer Health
+GET {{lb}}/health
+
+### 4. Load Balancer Stats
+GET {{lb}}/stats
+
+### 5. Load Balancer Workers
+GET {{lb}}/workers
+
+### 6. Worker Query
+POST {{worker}}/query
+Content-Type: application/json
+
+{
+  "query": "What is AI?",
+  "top_k": 3
+}
+
+### 7. LB Query
+POST {{lb}}/query
+Content-Type: application/json
+
+{
+  "query": "What is machine learning?",
+  "top_k": 3
+}
+
+### 8. LB Strategy Change
+POST {{lb}}/strategy
+Content-Type: application/json
+
+{
+  "strategy": "gpu_aware"
+}
+
+### 9. Worker Batch Query
+POST {{worker}}/query/batch
+Content-Type: application/json
+
+{
+  "queries": [
+    {"query": "Query 1", "top_k": 2},
+    {"query": "Query 2", "top_k": 2}
+  ]
+}
+
+### 10. Cache Test - Same Query
+POST {{worker}}/query
+Content-Type: application/json
+
+{
+  "query": "What is AI?",
+  "top_k": 3
+}
