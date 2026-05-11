@@ -38,51 +38,33 @@ def check_ollama(target_model: str = ""):
 
 
 def setup_nginx():
-    nginx_exe = ROOT / "lb" / "nginx" / "nginx.exe"
-    if nginx_exe.exists():
+    r = subprocess.run(["which", "nginx"], capture_output=True)
+    if r.returncode == 0:
         log("NGINX already installed")
         return True
     log("Setting up NGINX...")
-    r = subprocess.run(
-        ["powershell", "-File", str(ROOT / "lb" / "setup.ps1")],
-        capture_output=True, text=True, timeout=60
-    )
-    if r.returncode != 0:
-        log(f"NGINX setup failed:\n{r.stderr}")
-        return False
+    subprocess.run(["apt-get", "install", "-y", "nginx"], capture_output=True)
     log("NGINX setup complete")
     return True
 
 
 def start_nginx():
-    nginx_exe = ROOT / "lb" / "nginx" / "nginx.exe"
-    nginx_dir = ROOT / "lb" / "nginx"
     conf_src = ROOT / "lb" / "nginx.conf"
-    conf_dst = nginx_dir / "conf" / "nginx.conf"
+    conf_dst = Path("/etc/nginx/nginx.conf")
 
-    if not nginx_exe.exists():
-        log("NGINX not found, run setup first")
-        return False
-
-    conf_dst.parent.mkdir(parents=True, exist_ok=True)
     import shutil
     shutil.copy2(str(conf_src), str(conf_dst))
 
-    subprocess.run(["taskkill", "/f", "/im", "nginx.exe"],
-                   capture_output=True, timeout=5)
+    subprocess.run(["pkill", "-f", "nginx"], capture_output=True)
     time.sleep(1)
-    p = subprocess.Popen(
-        [str(nginx_exe), "-p", str(nginx_dir)],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-    )
+    subprocess.Popen(["nginx"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(2)
     log("NGINX started on port 8000")
     return True
 
 
 def stop_nginx():
-    subprocess.run(["taskkill", "/f", "/im", "nginx.exe"],
-                   capture_output=True, timeout=5)
+    subprocess.run(["pkill", "-f", "nginx"], capture_output=True)
     log("NGINX stopped")
 
 
@@ -326,8 +308,6 @@ def run_single_benchmark(label: str, workers: int, model: str,
 
     procs = []
 
-    nginx_exe = ROOT / "lb" / "nginx" / "nginx.exe"
-    nginx_dir = ROOT / "lb" / "nginx"
     try:
         nginx_conf_path = ROOT / "lb" / "nginx" / "conf" / "nginx.conf"
         if nginx_conf_path.exists():
@@ -339,8 +319,7 @@ def run_single_benchmark(label: str, workers: int, model: str,
             else:
                 content = content.replace("least_conn;", "# least_conn;")
             nginx_conf_path.write_text(content)
-            subprocess.run([str(nginx_exe), "-p", str(nginx_dir), "-s", "reload"],
-                           capture_output=True, timeout=10)
+            subprocess.run(["nginx", "-s", "reload"], capture_output=True, timeout=10)
         log(f"NGINX strategy: {nginx_strategy}")
 
         log("Starting master...")
