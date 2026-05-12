@@ -7,7 +7,4 @@ langchain-core
 langchain-text-splitters
 langchain-ollama
 langchain-chroma
-langchain-huggingface
 chromadb
-sentence-transformers
-jinja2

@@ -1,289 +1,204 @@
 # Distributed LLM Inference System with RAG and Load Balancing
 
-A Python-based distributed computing system designed to handle **1000+ concurrent user requests** for Large Language Model (LLM) inference augmented with **Retrieval-Augmented Generation (RAG)**. The system runs locally on a single machine using process-level isolation — each component is an independent OS process with its own HTTP server.
-
----
+Distributed system for handling 1000+ concurrent LLM requests with RAG, load balancing, and fault tolerance.
 
 ## Architecture
 
-The system is organized into **five distinct layers**, each running as an independent component:
-
-| Layer             | Port      | Technology                  | Purpose                                                                       |
-| ----------------- | --------- | --------------------------- | ----------------------------------------------------------------------------- |
-| **Client**        | —         | `threading`                 | Simulates 1000+ concurrent users, measures per-request latency and throughput |
-| **Load Balancer** | 8000      | FastAPI                     | Single entry point with 3 routing strategies                                  |
-| **Master Node**   | 9000      | FastAPI                     | Health monitor, failure detection, metrics dashboard, task reassignment       |
-| **GPU Workers**   | 8001–8004 | FastAPI (x4)                | Independent processes running the full RAG + LLM pipeline                     |
-| **RAG Pipeline**  | —         | ChromaDB + nomic-embed-text | Offline document indexing + online semantic retrieval                         |
-
-### System Architecture
-
 ```
-User (thread)
-  → HTTP POST /query  →  Load Balancer (port 8000)
-                               ↓  selects worker (routing strategy)
-Worker Node (port 800X)
-                                ↓  embed query (nomic-embed-text)
-                           ChromaDB  →  top-K chunks
-                               ↓  build augmented prompt
-                          Ollama (LLM)  →  generated answer
-                               ↓  return response + latency
-   ← HTTP 200 JSON  ←  Load Balancer  ←  Worker Node
+Client (benchmark.py)
+  ↓ HTTP POST /query
+NGINX (port 8000) — round_robin / least_connections
+  ↓
+Workers (ports 8001-8004) — FastAPI + Ollama LLM
+  ↓
+ChromaDB (vector store) ← Ollama embeddings
+Master (port 9000) — heartbeat monitoring, /schedule endpoint
 ```
 
----
+## Quick Start (Google Colab)
 
-## Technology Stack
-
-| Category              | Tool                               | Notes                                                           |
-| --------------------- | ---------------------------------- | --------------------------------------------------------------- |
-| **Language**          | Python 3.10+                       | All components                                                  |
-| **LLM Runtime**       | Ollama                             | Serves models via HTTP API                                      |
-| **LLM Models**        | SmolLM2, Qwen2.5 3B, Mistral 7B    | Via LangChain `OllamaLLM`                                       |
-| **Embeddings**        | nomic-embed-text                   | LangChain + Ollama                                              |
-| **Vector DB**         | ChromaDB                           | On-disk, shared across all workers                              |
-| **Web Framework**     | FastAPI + Uvicorn                  | Each component runs as a separate process                       |
-| **RAG Orchestration** | LangChain ecosystem                | `langchain-ollama`, `langchain-chroma`, `langchain-huggingface` |
-| **Load Testing**      | `threading`, `time`, `collections` | 1000 concurrent user simulation                                 |
-
----
-
-## Project Structure
-
-```
-project/
-├── common/
-│   └── models.py            # Shared Request/Response dataclasses
-├── lb/
-│   └── load_balancer.py     # Load balancer with 3 routing strategies (port 8000)
-├── master/
-│   └── monitor.py           # Health monitor & orchestrator (port 9000)
-├── workers/
-│   └── worker.py            # GPU worker node template (ports 8001–8004)
-├── rag/
-│   └── retriever.py         # ChromaDB query embedding & retrieval
-├── llm/
-│   └── inference.py         # Ollama LLM inference via LangChain
-├── client/
-│   └── load_generator.py    # 1000-user concurrent load test
-├── ingest.py                # One-time document ingestion script
-└── main.py                  # Optional convenience launcher
+### Cell 1 — Install Ollama + pull models
+```python
+!curl -fsSL https://ollama.com/install.sh | sh
+import subprocess, time
+subprocess.Popen(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+time.sleep(3)
+!ollama pull smollm2:135m
+!ollama pull nomic-embed-text
 ```
 
----
-
-## Quick Start
-
-### Prerequisites
-
-- **Python 3.10+**
-- **Ollama** installed and running
-
-**Install Ollama (Windows PowerShell):**
-
-```powershell
-irm https://ollama.com/install.ps1 | iex
+### Cell 2 — Install Python deps + clone
+```python
+!pip install -q fastapi uvicorn pydantic httpx langchain langchain-ollama langchain-chroma chromadb
+!git clone <your-repo-url> distributedLLM
+%cd distributedLLM
 ```
 
-**Install Ollama (macOS/Linux):**
+### Cell 3 — Ingest RAG documents
+```python
+!python ingest.py
+```
+
+### Cell 4 — Run benchmark
+```python
+# Quick test (low concurrency)
+!python benchmark.py --single --workers 4 --concurrency 20 --requests 200
+
+# High concurrency (takes longer, timeout=3600s)
+!python benchmark.py --single --workers 4 --concurrency 1000 --requests 1000
+```
+
+### Cell 5 — Fault tolerance test
+```python
+!python benchmark.py --fault-test --workers 4 --concurrency 20 --requests 200
+```
+
+## Running Tests
+
+Start services first, then run pytest:
 
 ```bash
-curl -fsSL https://ollama.com/install.sh | sh
-```
-
-### 1. Create Virtual Environment (Recommended)
-
-```bash
-python -m venv .venv
-```
-
-Activate the environment:
-
-**Windows (PowerShell):**
-
-```powershell
-.venv\Scripts\Activate
-```
-
-**Windows (CMD):**
-
-```cmd
-.venv\Scripts\activate.bat
-```
-
-**Linux/Mac:**
-
-```bash
-source .venv/bin/activate
-```
-
-### 2. Install Dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-### 3. Pull Ollama Models
-
-```bash
-ollama pull nomic-embed-text
-ollama pull smollm2
-```
-
-### 4. Ingest Documents
-
-```bash
-python ingest.py
-```
-
-This reads source documents, splits them into chunks, embeds with nomic-embed-text, and stores vectors in ChromaDB on disk.
-
-### 5. Start System Components
-
-Each component must run in its own terminal:
-
-```bash
-# Master Node (health monitor)
+# Terminal 1: Start master
 uvicorn master.monitor:app --port 9000
 
-# Worker Nodes (start 4 instances)
+# Terminal 2-5: Start workers
 uvicorn workers.worker:app --port 8001
 uvicorn workers.worker:app --port 8002
 uvicorn workers.worker:app --port 8003
 uvicorn workers.worker:app --port 8004
 
-# Load Balancer (entry point)
-uvicorn lb.load_balancer:app --port 8000
+# Terminal 6: Start NGINX
+cp lb/nginx.conf /etc/nginx/nginx.conf && nginx
+
+# Terminal 7: Run tests
+pytest tests/ -v
 ```
 
-### 6. Run Load Test
+Or run a single test file:
+```bash
+pytest tests/test_load_balancer.py -v
+pytest tests/test_rag.py -v -k "test_basic_retrieval"
+```
+
+## CLI Reference
 
 ```bash
-python client/load_generator.py
+python benchmark.py --single --workers 4 --concurrency 100 --requests 500
+python benchmark.py --fault-test --workers 4 --concurrency 20 --requests 200
+python main.py master                        # Start master only
+python main.py worker 1                      # Start worker-1
+python main.py controller                    # Start LB controller
+python ingest.py                             # Ingest RAG documents
 ```
 
-### 6. Test RAG Pipeline (Optional)
+## Project Files — Complete Reference
 
-```bash
-python rag/test_retriever.py
-```
+### Core System (used by benchmark)
 
----
+| File | What benchmark.py does with it | Role |
+|---|---|---|
+| `benchmark.py` | Entry point — runs the test | Benchmark suite: starts components, runs load test, RAG accuracy, fault injection |
+| `master/monitor.py` | Starts as subprocess on port 9000 | Master node: worker registration, heartbeat monitoring (5s), `/schedule` endpoint |
+| `workers/worker.py` | Starts as subprocess on ports 8001-8004 | Worker: FastAPI app with RAG + LLM pipeline, response caching, GPU stats |
+| `llm/inference.py` | Imported by worker.py | Async InferenceEngine: calls Ollama `/api/generate` via httpx, semaphore-limited (20) |
+| `rag/retriever.py` | Imported by worker.py | ChromaDB retriever: similarity search, batch retrieval, embedding cache |
+| `common/models.py` | Imported by master/monitor.py | Shared dataclasses: WorkerInfo, HealthCheck, MetricsSummary |
+| `lb/nginx.conf` | Copied to /etc/nginx/nginx.conf | NGINX configuration: 8192 connections, proxy_next_upstream retry, 3600s timeout |
 
-## RAG Pipeline Setup
+### Load Balancer & Controller
 
-### Running ingest.py
+| File | Usage | Role |
+|---|---|---|
+| `lb/load_balancer.py` | Run via `python -m uvicorn lb.load_balancer:app` or `main.py lb` | 5 routing strategies, health checks, pending request persistence, master scheduling coordination |
+| `lb/app.py` | Run via `main.py controller`, imports from `lb/load_balancer.py` | LB Controller: worker enable/disable, strategy switching, status endpoints |
 
-```bash
-python ingest.py
-```
+### Document Ingestion
 
-This script:
+| File | Usage | Role |
+|---|---|---|
+| `ingest.py` | Run directly: `python ingest.py` | Reads `docs/*.txt`, splits into chunks, embeds with nomic-embed-text, stores in ChromaDB |
+| `docs/dog_facts.txt` | Read by ingest.py | Source document for RAG (pet facts about dogs) |
+| `docs/cat_facts.txt` | Read by ingest.py | Source document for RAG (pet facts about cats) |
+| `docs/hamster_facts.txt` | Read by ingest.py | Source document for RAG (pet facts about hamsters) |
+| `docs/bird_facts.txt` | Read by ingest.py | Source document for RAG (pet facts about birds) |
+| `docs/fish_facts.txt` | Read by ingest.py | Source document for RAG (pet facts about fish) |
+| `docs/rabbit_facts.txt` | Read by ingest.py | Source document for RAG (pet facts about rabbits) |
+| `docs/turtle_facts.txt` | Read by ingest.py | Source document for RAG (pet facts about turtles) |
 
-1. Reads all `.txt` and `.md` files from the `docs/` folder
-2. Splits documents into chunks (500 chars, 50 overlap)
-3. Embeds chunks using the configured embedding model
-4. Stores vectors in ChromaDB at `./chroma_db`
+### Client Load Test Tools
 
-### Adding New Documents
+| File | Usage | Role |
+|---|---|---|
+| `client/load_generator.py` | Imported by tests/test_load_balancer.py and client/stress_test.py | LoadTestRunner: configurable concurrent request simulation with warmup and reporting |
+| `client/stress_test.py` | Imported by tests/test_load_balancer.py | Multi-level stress test runner: iterates concurrency 10→50→100→250→500→1000 |
 
-1. Add `.txt` or `.md` files to the `docs/` folder
-2. Delete existing database:
-   ```powershell
-   Remove-Item -Recurse -Force .\chroma_db
-   ```
-3. Re-run ingest:
-   ```bash
-   python ingest.py
-   ```
+### Launcher
 
-### Configuration (ingest.py)
+| File | Usage | Role |
+|---|---|---|
+| `main.py` | Run directly: `python main.py start|master|worker|lb|controller` | Launcher: `start` boots everything, individual commands for single components |
 
-| Variable          | Default                   | Description              |
-| ----------------- | ------------------------- | ------------------------ |
-| `EMBEDDING_MODEL` | `nomic-embed-text:latest` | Ollama embedding model   |
-| `CHROMA_DB_PATH`  | `./chroma_db`             | Vector database location |
-| `DOCS_PATH`       | `./docs`                  | Source documents folder  |
-| `chunk_size`      | 500                       | Characters per chunk     |
-| `chunk_overlap`   | 50                        | Overlap between chunks   |
+### Test Suite (pytest)
 
----
+| File | What it tests |
+|---|---|
+| `tests/conftest.py` | Pytest fixtures: lb_url, master_url, worker_url, verify_services, sample_query |
+| `tests/test_load_balancer.py` | 25+ tests: health endpoints, routing strategies (rr/least/hybrid/gpu-aware), query handling, worker management, fault tolerance, batch, streaming |
+| `tests/test_rag.py` | 283 lines: retriever init, ChromaDB connection, retrieval quality, embedding consistency, specific queries (dog/cat/hamster), cache |
+| `tests/test_ollama.py` | 206 lines: model availability, generate/embedding endpoints, GPU detection, inference latency |
+| `tests/test_critical_fixes.py` | 366 lines: backpressure semaphore, worker auto-discovery, graceful degradation, feature parity |
+| `tests/test_gpu_worker.py` | 305 lines: health endpoints, query endpoints, GPU monitoring, caching, error handling |
+| `tests/test_failure_simulation.py` | 303 lines standalone (run directly): failure detection, LB routing with failed workers, restart recovery |
 
-## Load Balancing Strategies
+### Configuration
 
-| Strategy              | Description                                                                     |
-| --------------------- | ------------------------------------------------------------------------------- |
-| **Round Robin**       | Distributes requests evenly across all active workers in sequence               |
-| **Least Connections** | Routes each request to the worker currently handling the fewest active requests |
-| **Load-Aware**        | Extends least connections with worker health scoring based on recent latency    |
+| File | Role |
+|---|---|
+| `requirements.txt` | Python dependencies: fastapi, uvicorn, httpx, langchain-ollama, langchain-chroma, chromadb |
+| `pytest.ini` | Pytest config: test discovery pattern (`test_*.py`), markers (health, query, gpu, load, cache, slow, fault_tolerance), 120s timeout |
 
-The routing strategy is configurable via environment variable or config setting.
+### Data Files (auto-generated)
 
----
+| File | Generated by | Role |
+|---|---|---|
+| `benchmark_result_latest.json` | `benchmark.py --single` | Latest benchmark results: success rate, throughput, latency percentiles, RAG accuracy |
+| `load_test_results.json` | `client/stress_test.py` | Multi-level load test results across concurrency levels |
 
-## Fault Tolerance
+### PowerShell Scripts (Windows utilities)
 
-The system implements three mechanisms for resilience:
+| File | Role |
+|---|---|
+| `start.ps1` | Start all system components (master, 4 workers, NGINX) on Windows |
+| `restart-all.ps1` | Kill and restart all components |
+| `load-test.ps1` | Run load test with configurable parameters |
+| `scripts/start_workers.ps1` | Start worker processes |
+| `scripts/start_ollama_servers.ps1` | Start multiple Ollama instances |
+| `scripts/stop_ollama_servers.ps1` | Stop Ollama instances |
 
-1. **Heartbeat-based failure detection** — Master Node pings each worker every 5 seconds; 3 consecutive missed heartbeats marks a worker as failed
-2. **Automatic task reassignment** — In-flight requests on a failed worker are requeued and redistributed to healthy workers
-3. **Load Balancer resilience** — The routing pool updates in real-time; the LB never routes to a worker declared unhealthy by the Master Node
+### HTTP Request Files (development)
 
----
+| File | Role |
+|---|---|
+| `requests/env.http` | VS Code REST Client environment variables |
+| `requests/master_requests.http` | Test Master endpoints (register, workers, metrics) |
+| `requests/worker_requests.http` | Test Worker endpoints (query, health, gpu-stats) |
+| `requests/lb_requests.http` | Test LB endpoints (strategy, workers, stats) |
+| `requests/quickstart.http` | Quick smoke test requests |
+| `requests/load_test.http` | Load test requests |
+| `requests/test_all.http` | Comprehensive endpoint test suite |
 
-## Scope and Limitations
 
-- All components run on a **single physical machine**; "distributed" is simulated at the process level
-- Ollama serializes LLM inference internally per instance; true GPU parallelism requires multiple physical GPUs
-- ChromaDB is shared across workers via a single on-disk database; production would use a dedicated vector DB server
-- Request logs are not persisted across restarts
+### Data Directories (auto-generated)
 
----
+| Directory | Created by | Content |
+|---|---|---|
+| `chroma_db/` | `ingest.py` | ChromaDB vector store: embedded document chunks for RAG retrieval |
+| `chroma_db/chroma.sqlite3` | `ingest.py` | SQLite database backing ChromaDB (auto-generated, in `.gitignore`) |
 
-## Troubleshooting
+### Package Markers (empty)
 
-### "model not found" error
-
-```bash
-# Pull the required Ollama models
-ollama pull nomic-embed-text
-ollama pull smollm2:135m
-```
-
-### ChromaDB not found / empty results
-
-```powershell
-# Delete and rebuild the vector database
-Remove-Item -Recurse -Force .\chroma_db
-python ingest.py
-```
-
-### Ollama not running
-
-```bash
-# Start Ollama service
-ollama serve
-```
-
-### Connection refused (port already in use)
-
-```powershell
-# Find and kill process on port
-netstat -ano | findstr :8000
-taskkill /PID <PID> /F
-```
-
-### Import errors (ModuleNotFoundError)
-
-```powershell
-# Ensure you're in project root
-cd E:\coding\python\distributed
-# Or set PYTHONPATH
-$env:PYTHONPATH = "E:\coding\python\distributed"
-```
-
-### Slow retrieval / high latency
-
-- Check embedding model is loaded in Ollama: `ollama list`
-- Reduce `top_k` in requests
-- Consider using a lighter embedding model
+| File | Role |
+|---|---|
+| `llm/__init__.py` | Marks `llm/` as Python package |
+| `rag/__init__.py` | Marks `rag/` as Python package |
+| `tests/__init__.py` | Marks `tests/` as Python package |

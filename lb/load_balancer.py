@@ -592,6 +592,67 @@ async def remove_worker(data: dict):
     return {"status": "removed", "worker_id": worker_id}
 
 
+class LoadBalancer:
+    def disable_worker(self, worker_id: str):
+        if worker_id in workers:
+            workers[worker_id].healthy = False
+
+    def enable_worker(self, worker_id: str):
+        if worker_id in workers:
+            workers[worker_id].healthy = True
+            workers[worker_id].consecutive_failures = 0
+
+    def get_current_strategy(self) -> str:
+        return current_strategy.value
+
+    def switch_strategy(self, strategy: str):
+        global current_strategy, _schedule_cache, _schedule_cache_time
+        if strategy not in [s.value for s in RoutingStrategy]:
+            raise ValueError(f"Invalid strategy: {strategy}")
+        current_strategy = RoutingStrategy(strategy)
+        _schedule_cache = {}
+        _schedule_cache_time = 0
+
+    def get_worker_list(self) -> list:
+        return [
+            {
+                "worker_id": w.worker_id,
+                "host": w.host,
+                "port": w.port,
+                "healthy": w.healthy,
+                "active_connections": w.active_connections,
+                "avg_latency_ms": w.avg_latency_ms,
+                "gpu_utilization": w.gpu_utilization,
+                "gpu_memory_mb": w.gpu_memory_mb,
+            }
+            for w in workers.values()
+        ]
+
+    def get_status(self) -> dict:
+        healthy = [w for w in workers.values() if w.healthy]
+        latencies = list(routing_state.request_latencies)
+        return {
+            "total_workers": len(workers),
+            "healthy_workers": len(healthy),
+            "current_strategy": current_strategy.value,
+            "total_requests": routing_state.total_requests,
+            "successful_requests": routing_state.successful_requests,
+            "failed_requests": routing_state.failed_requests,
+            "reassigned_requests": routing_state.reassigned_requests,
+            "pending_requests": len(pending_requests),
+            "error_rate_percent": round((routing_state.failed_requests / routing_state.total_requests * 100), 2) if routing_state.total_requests > 0 else 0,
+            "total_active_connections": sum(w.active_connections for w in workers.values()),
+            "latency": {
+                "avg_ms": round(sum(latencies) / len(latencies), 2) if latencies else 0,
+                "min_ms": round(min(latencies), 2) if latencies else 0,
+                "max_ms": round(max(latencies), 2) if latencies else 0,
+                "p50_ms": calculate_percentile(latencies, 50),
+                "p95_ms": calculate_percentile(latencies, 95),
+                "p99_ms": calculate_percentile(latencies, 99),
+            },
+        }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=LB_PORT)
