@@ -97,6 +97,93 @@ def stop_all():
     print("All components stopped.")
 
 
+def colab():
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(script_dir)
+
+    print("=" * 60)
+    print("COLAB DEPLOYMENT")
+    print("=" * 60)
+
+    print("\n[1/5] Installing Python dependencies...")
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-r", "requirements.txt"],
+                   capture_output=True)
+
+    print("[2/5] Ingesting RAG documents...")
+    subprocess.run([sys.executable, "ingest.py"], capture_output=True)
+    print("  ChromaDB ready")
+
+    print("[3/5] Starting system components...")
+    os.environ["SIMULATION"] = "true"
+
+    procs = []
+    print("  Starting Master Node...")
+    procs.append(start_component("master", "master.monitor", 9000))
+    time.sleep(2)
+
+    for i in range(1, 5):
+        env = {"MAX_CONCURRENT_TASKS": "8", "BACKPRESSURE_QUEUE_SIZE": "200"}
+        procs.append(start_component(f"worker-{i}", "workers.worker", 8000 + i, env))
+        time.sleep(1)
+
+    print("  Starting Load Balancer...")
+    procs.append(start_component("lb", "lb.load_balancer", 8000))
+
+    print("\n[4/5] Waiting for services to initialize...")
+    time.sleep(8)
+
+    import httpx
+    for name, url in [("Master", "http://localhost:9000/health"),
+                       ("Worker-1", "http://localhost:8001/health"),
+                       ("Worker-2", "http://localhost:8002/health"),
+                       ("Worker-3", "http://localhost:8003/health"),
+                       ("Worker-4", "http://localhost:8004/health"),
+                       ("LB", "http://localhost:8000/health")]:
+        try:
+            r = httpx.get(url, timeout=5)
+            print(f"  [OK] {name}")
+        except Exception:
+            print(f"  [FAIL] {name}")
+
+    workers_r = httpx.get("http://localhost:9000/workers", timeout=5)
+    registered = len(workers_r.json()["workers"])
+    print(f"\n  Workers registered: {registered}")
+
+    print("\n[5/5] Running quick benchmark...")
+    try:
+        result = subprocess.run(
+            [sys.executable, "client/load_generator.py",
+             "--url", "http://localhost:8000",
+             "--requests", "50", "--concurrency", "10"],
+            capture_output=True, text=True, timeout=300
+        )
+        print(result.stdout)
+    except Exception as e:
+        print(f"  Benchmark error: {e}")
+
+    print("\n" + "=" * 60)
+    print("COLAB DEPLOYMENT COMPLETE")
+    print("=" * 60)
+    print("  Query endpoint:  http://localhost:8000/query")
+    print("  Stats:           http://localhost:8000/stats")
+    print("  Workers:         http://localhost:9000/workers")
+    print("  Press Ctrl+C to stop.\n")
+
+    try:
+        for p in procs:
+            p.wait()
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+    finally:
+        for p in procs:
+            p.terminate()
+            try:
+                p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                p.kill()
+        print("All components stopped.")
+
+
 def main():
     if len(sys.argv) < 2:
         print("Distributed LLM Inference System")
@@ -104,6 +191,7 @@ def main():
         print("Usage:")
         print("  python main.py start              Start all components")
         print("  python main.py stop               Stop all components")
+        print("  python main.py colab              Full Colab setup + benchmark")
         print("  python main.py master             Start Master Node only")
         print("  python main.py worker <n>         Start Worker n (1-4)")
         print("  python main.py lb                 Start NGINX")
@@ -116,6 +204,8 @@ def main():
         start_all()
     elif cmd == "stop":
         stop_all()
+    elif cmd == "colab":
+        colab()
     elif cmd == "master":
         print("Starting Master Node on port 9000")
         subprocess.run(["uvicorn", "master.monitor:app", "--port", "9000"])
@@ -143,7 +233,7 @@ def main():
         subprocess.run(["uvicorn", "lb.app:app", "--port", "8005"])
     else:
         print(f"Unknown command: {cmd}")
-        print("Usage: python main.py [start|stop|master|worker|lb|controller]")
+        print("Usage: python main.py [start|stop|colab|master|worker|lb|controller]")
 
 
 if __name__ == "__main__":
