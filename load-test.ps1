@@ -6,7 +6,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$LB_URL = "http://localhost:8000"
+$LB_URL = if ($env:LB_URL) { $env:LB_URL } else { "http://localhost:8000" }
 
 Write-Host "=== Concurrent Load Test ===" -ForegroundColor Cyan
 Write-Host "Concurrent Users: $ConcurrentUsers"

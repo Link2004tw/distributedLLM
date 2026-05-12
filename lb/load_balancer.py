@@ -414,12 +414,11 @@ async def startup():
 
     load_pending_requests()
 
-    default_workers = [
-        ("worker-1", "localhost", 8001),
-        ("worker-2", "localhost", 8002),
-        ("worker-3", "localhost", 8003),
-        ("worker-4", "localhost", 8004),
-    ]
+    default_workers = []
+    for i in range(1, 5):
+        host = os.environ.get(f"WORKER{i}", "localhost")
+        port = int(os.environ.get(f"WORKER{i}_PORT", f"800{i}"))
+        default_workers.append((f"worker-{i}", host, port))
     for worker_id, host, port in default_workers:
         workers[worker_id] = WorkerState(
             worker_id=worker_id,

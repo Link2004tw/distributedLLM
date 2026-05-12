@@ -1,3 +1,4 @@
+import os
 import asyncio
 import time
 from typing import Dict, Set
@@ -17,7 +18,7 @@ FAILED_WORKERS: Set[str] = set()
 MASTER_PORT = 9000
 HEARTBEAT_INTERVAL = 5
 FAILURE_THRESHOLD = 3
-LOAD_BALANCER_URL = "http://localhost:8000"
+LOAD_BALANCER_URL = os.environ.get("LOAD_BALANCER_URL", "http://localhost:8000")
 
 
 @app.on_event("startup")

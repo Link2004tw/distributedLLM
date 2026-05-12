@@ -1,22 +1,22 @@
 {
   "total": 1000,
-  "success": 538,
-  "failed": 462,
-  "error_rate": 46.2,
-  "total_time_s": 100.94,
-  "throughput_rps": 9.91,
-  "avg_latency_s": 13.091,
-  "min_latency_s": 0.0022,
-  "max_latency_s": 61.4777,
-  "p50_s": 0.0118,
-  "p95_s": 53.8607,
-  "p99_s": 59.2571,
+  "success": 0,
+  "failed": 1000,
+  "error_rate": 100.0,
+  "total_time_s": 14.57,
+  "throughput_rps": 68.66,
+  "avg_latency_s": 0,
+  "min_latency_s": 0,
+  "max_latency_s": 0,
+  "p50_s": 0,
+  "p95_s": 0,
+  "p99_s": 0,
   "sample_errors": [
-    "[WinError 10054] An existing connection was forcibly closed by the remote host",
-    "[WinError 10054] An existing connection was forcibly closed by the remote host",
-    "[WinError 10053] An established connection was aborted by the software in your host machine",
-    "[WinError 10053] An established connection was aborted by the software in your host machine",
-    "[WinError 10054] An existing connection was forcibly closed by the remote host"
+    "[WinError 10061] No connection could be made because the target machine actively refused it",
+    "[WinError 10061] No connection could be made because the target machine actively refused it",
+    "[WinError 10061] No connection could be made because the target machine actively refused it",
+    "[WinError 10061] No connection could be made because the target machine actively refused it",
+    "[WinError 10061] No connection could be made because the target machine actively refused it"
   ],
   "rag_accuracy": {
     "total_queries": 5,
@@ -30,97 +30,55 @@
       {
         "query": "What is a dog?",
         "description": "Dog-related query",
-<<<<<<< HEAD
         "success": false,
         "has_sources": false,
         "keyword_match": false,
         "match_score": 0,
-        "error": "<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body>\r\n<center><h1>502 Bad Gateway</h1></cente"
-=======
-        "success": true,
-        "has_sources": true,
-        "keyword_match": false,
-        "match_score": 0.2,
-        "sources_count": 3,
-        "retrieval_time_ms": 1322.83
->>>>>>> 52a77467fd264e437544459966887d1c0a9c8a22
+        "error": "[WinError 10061] No connection could be made because the target machine actively refused it"
       },
       {
         "query": "Tell me about cats",
         "description": "Cat-related query",
-<<<<<<< HEAD
         "success": false,
         "has_sources": false,
         "keyword_match": false,
         "match_score": 0,
-        "error": "<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body>\r\n<center><h1>502 Bad Gateway</h1></cente"
-=======
-        "success": true,
-        "has_sources": true,
-        "keyword_match": true,
-        "match_score": 0.4,
-        "sources_count": 3,
-        "retrieval_time_ms": 607.4
->>>>>>> 52a77467fd264e437544459966887d1c0a9c8a22
+        "error": "[WinError 10061] No connection could be made because the target machine actively refused it"
       },
       {
         "query": "What do you know about hamsters?",
         "description": "Hamster-related query",
-<<<<<<< HEAD
         "success": false,
         "has_sources": false,
         "keyword_match": false,
         "match_score": 0,
-        "error": "<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body>\r\n<center><h1>502 Bad Gateway</h1></cente"
-=======
-        "success": true,
-        "has_sources": true,
-        "keyword_match": true,
-        "match_score": 1.0,
-        "sources_count": 3,
-        "retrieval_time_ms": 2230.6
->>>>>>> 52a77467fd264e437544459966887d1c0a9c8a22
+        "error": "[WinError 10061] No connection could be made because the target machine actively refused it"
       },
       {
         "query": "Explain artificial intelligence",
         "description": "AI definition query",
-        "success": true,
-        "has_sources": true,
-        "keyword_match": false,
-<<<<<<< HEAD
-        "match_score": 0,
-        "error": "<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body>\r\n<center><h1>502 Bad Gateway</h1></cente"
-=======
-        "match_score": 0.25,
-        "sources_count": 3,
-        "retrieval_time_ms": 561.74
->>>>>>> 52a77467fd264e437544459966887d1c0a9c8a22
-      },
-      {
-        "query": "What is machine learning?",
-        "description": "ML definition query",
-<<<<<<< HEAD
         "success": false,
         "has_sources": false,
         "keyword_match": false,
         "match_score": 0,
-        "error": "<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body>\r\n<center><h1>502 Bad Gateway</h1></cente"
-=======
-        "success": true,
-        "has_sources": true,
-        "keyword_match": true,
-        "match_score": 0.6,
-        "sources_count": 3,
-        "retrieval_time_ms": 775.27
->>>>>>> 52a77467fd264e437544459966887d1c0a9c8a22
+        "error": "[WinError 10061] No connection could be made because the target machine actively refused it"
+      },
+      {
+        "query": "What is machine learning?",
+        "description": "ML definition query",
+        "success": false,
+        "has_sources": false,
+        "keyword_match": false,
+        "match_score": 0,
+        "error": "[WinError 10061] No connection could be made because the target machine actively refused it"
       }
     ]
   },
   "label": "single-test",
   "config": {
-    "workers": 4,
-    "model": "smollm2:135m",
-    "concurrency": 500,
+    "workers": 8,
+    "model": "smollm:135m",
+    "concurrency": 160,
     "strategy": "round_robin",
     "ollama_num_gpu": "",
     "ollama_ctx": "",
