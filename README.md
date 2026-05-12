@@ -29,7 +29,7 @@ time.sleep(3)
 
 ### Cell 2 — Install Python deps + clone
 ```python
-!pip install -q fastapi uvicorn pydantic httpx langchain langchain-ollama langchain-chroma chromadb jinja2
+!pip install -q fastapi uvicorn pydantic httpx langchain langchain-ollama langchain-chroma chromadb
 !git clone <your-repo-url> distributedLLM
 %cd distributedLLM
 ```
@@ -55,22 +55,33 @@ time.sleep(3)
 
 ## Running Tests
 
-Start services first, then run pytest:
+Start all services with one command, then run pytest in another terminal:
 
 ```bash
-# Terminal 1: Start master
+# Terminal 1: Start everything
+python main.py start
+
+# Terminal 2: Run tests
+pytest tests/ -v
+```
+
+Or start components individually:
+
+```bash
+# Terminal 1: Master
 uvicorn master.monitor:app --port 9000
 
-# Terminal 2-5: Start workers
+# Terminal 2-5: Workers (4 terminals)
 uvicorn workers.worker:app --port 8001
 uvicorn workers.worker:app --port 8002
 uvicorn workers.worker:app --port 8003
 uvicorn workers.worker:app --port 8004
 
-# Terminal 6: Start NGINX
-cp lb/nginx.conf /etc/nginx/nginx.conf && nginx
+# Terminal 6: NGINX or LB
+nginx -c lb/nginx.conf                    # if NGINX installed
+uvicorn lb.load_balancer:app --port 8000  # fallback
 
-# Terminal 7: Run tests
+# Terminal 7: Tests
 pytest tests/ -v
 ```
 
@@ -83,11 +94,14 @@ pytest tests/test_rag.py -v -k "test_basic_retrieval"
 ## CLI Reference
 
 ```bash
+python main.py start                         # Start all components (master, 4 workers, NGINX/LB, controller)
+python main.py stop                          # Stop all components
+python main.py master                        # Start master only
+python main.py worker 1                      # Start worker-1 only
+python main.py lb                            # Start NGINX only
+python main.py controller                    # Start LB controller only
 python benchmark.py --single --workers 4 --concurrency 100 --requests 500
 python benchmark.py --fault-test --workers 4 --concurrency 20 --requests 200
-python main.py master                        # Start master only
-python main.py worker 1                      # Start worker-1
-python main.py controller                    # Start LB controller
 python ingest.py                             # Ingest RAG documents
 ```
 

@@ -37,7 +37,7 @@
 
 ### Architecture Design Rationale
 
-**Why NGINX + separate Load Balancer?** NGINX handles raw TCP connection management (8192 concurrent connections, epoll, request buffering) which is battle-tested at scale. The Load Balancer handles application-level routing logic (strategies, master coordination, health scoring). This separation lets each layer focus on what it does best.
+**Why NGINX + separate Load Balancer?** NGINX handles raw TCP connection management (8192 concurrent connections, request buffering, connection pooling) which is battle-tested at scale. The Load Balancer handles application-level routing logic (strategies, master coordination, health scoring). This separation lets each layer focus on what it does best.
 
 **Why process-level isolation for workers?** Each worker runs as an independent Python process with its own memory space, GIL, and async event loop. This simulates a true distributed system on a single machine — if one worker crashes, it doesn't affect the others. In production, these workers would run on separate物理 machines with dedicated GPUs.
 
@@ -355,7 +355,7 @@ Cache hit avoids both ChromaDB retrieval and Ollama inference, reducing latency 
 | "System remains responsive even under heavy load" | High concurrency test (1000 concurrent) | ✅ System processes all requests, no crashes |
 | "System continues functioning if some nodes fail" | Fault tolerance test (kill worker) | ✅ ~95% success during failure, auto-recovery |
 | "Consistent and accurate responses from the LLM system" | RAG accuracy test | ✅ 100% keyword match on test queries |
-| "Monitor performance and resource utilization" | Dashboard + `/stats` + `/metrics` endpoints | ✅ Real-time latency, throughput, GPU stats |
+| "Monitor performance and resource utilization" | `/stats` + `/metrics` + `/health` endpoints | ✅ Real-time latency, throughput, GPU stats |
 
 ## 12. Conclusion
 
