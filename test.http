@@ -1,0 +1,150 @@
+### Dashboard
+@dashboard = http://127.0.0.1:8100
+@lb = http://127.0.0.1:8000
+@master = http://127.0.0.1:9000
+@worker1 = http://127.0.0.1:8001
+@worker2 = http://127.0.0.1:8002
+@worker3 = http://127.0.0.1:8003
+@worker4 = http://127.0.0.1:8004
+
+### ─── Dashboard ───────────────────────────────────────────
+
+### Dashboard UI (HTML page)
+GET {{dashboard}}/
+
+### Dashboard API (aggregated system data)
+GET {{dashboard}}/api/dashboard
+
+### ─── Load Balancer ───────────────────────────────────────
+
+### LB Health
+GET {{lb}}/health
+
+### LB Stats (latency percentiles, throughput, error rate)
+GET {{lb}}/stats
+
+### LB Worker List
+GET {{lb}}/workers
+
+### Current Routing Strategy
+GET {{lb}}/strategy
+
+### Query via LB (single request)
+POST {{lb}}/query
+Content-Type: application/json
+
+{"query": "tell me about dogs", "top_k": 3}
+
+### Query via LB — cat
+POST {{lb}}/query
+Content-Type: application/json
+
+{"query": "tell me about cats", "top_k": 3}
+
+### Query via LB — birds
+POST {{lb}}/query
+Content-Type: application/json
+
+{"query": "tell me about birds", "top_k": 3}
+
+### Change Strategy to Round Robin
+POST {{lb}}/strategy
+Content-Type: application/json
+
+{"strategy": "round_robin"}
+
+### Change Strategy to Least Connections
+POST {{lb}}/strategy
+Content-Type: application/json
+
+{"strategy": "least_connections"}
+
+### Change Strategy to Hybrid
+POST {{lb}}/strategy
+Content-Type: application/json
+
+{"strategy": "hybrid"}
+
+### Change Strategy to GPU-Aware
+POST {{lb}}/strategy
+Content-Type: application/json
+
+{"strategy": "gpu_aware"}
+
+### Change Strategy to Load-Aware
+POST {{lb}}/strategy
+Content-Type: application/json
+
+{"strategy": "load_aware"}
+
+### Mark Worker Unhealthy (simulate failure)
+POST {{lb}}/worker/unhealthy
+Content-Type: application/json
+
+{"worker_id": "worker-1"}
+
+### Mark Worker Healthy (recover)
+POST {{lb}}/worker/healthy
+Content-Type: application/json
+
+{"worker_id": "worker-1"}
+
+### Pending Requests Count
+GET {{lb}}/pending/count
+
+### ─── Master Node ─────────────────────────────────────────
+
+### Master Health
+GET {{master}}/health
+
+### Registered Workers
+GET {{master}}/workers
+
+### Metrics Summary
+GET {{master}}/metrics
+
+### Schedule Endpoint (ask master for best worker)
+POST {{master}}/schedule
+Content-Type: application/json
+
+{"strategy": "hybrid"}
+
+### ─── Individual Workers ─────────────────────────────────
+
+### Worker 1 — Health
+GET {{worker1}}/health
+
+### Worker 1 — GPU Stats
+GET {{worker1}}/gpu-stats
+
+### Worker 1 — Direct Query
+POST {{worker1}}/query
+Content-Type: application/json
+
+{"query": "hamster facts", "top_k": 3}
+
+### Worker 2 — Health
+GET {{worker2}}/health
+
+### Worker 3 — Health
+GET {{worker3}}/health
+
+### Worker 4 — Health
+GET {{worker4}}/health
+
+### ─── Quick Smoke Test (all at once) ──────────────────────
+
+### Check all services are up
+GET {{master}}/health
+
+GET {{lb}}/health
+
+GET {{worker1}}/health
+
+GET {{worker2}}/health
+
+GET {{worker3}}/health
+
+GET {{worker4}}/health
+
+GET {{dashboard}}/api/dashboard

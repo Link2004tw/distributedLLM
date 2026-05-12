@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard — Distributed LLM</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; padding: 20px; }
+  h1 { font-size: 1.4rem; font-weight: 600; color: #f1f5f9; margin-bottom: 16px; }
+  .status-bar { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+  .status-item { background: #1e293b; border-radius: 8px; padding: 10px 18px; display: flex; align-items: center; gap: 8px; font-size: 0.85rem; }
+  .status-item .label { color: #94a3b8; }
+  .status-item .value { font-weight: 600; color: #f1f5f9; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .dot.green { background: #22c55e; }
+  .dot.red { background: #ef4444; }
+  .dot.yellow { background: #eab308; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .card { background: #1e293b; border-radius: 10px; padding: 16px; }
+  .card .top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .card .name { font-weight: 600; font-size: 0.95rem; }
+  .card .conn { font-size: 0.8rem; color: #94a3b8; }
+  .card .lat { font-size: 0.8rem; color: #94a3b8; margin-top: 2px; }
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  .chart-box { background: #1e293b; border-radius: 10px; padding: 16px; }
+  .chart-box h3 { font-size: 0.9rem; color: #94a3b8; margin-bottom: 8px; font-weight: 500; }
+  .chart-box canvas { max-height: 220px; }
+  .log { background: #1e293b; border-radius: 10px; padding: 16px; }
+  .log h3 { font-size: 0.9rem; color: #94a3b8; margin-bottom: 8px; font-weight: 500; }
+  .log table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+  .log th { text-align: left; color: #64748b; padding: 4px 8px; border-bottom: 1px solid #334155; }
+  .log td { padding: 4px 8px; border-bottom: 1px solid #1e293b; font-family: 'Courier New', monospace; }
+  .log td.time { color: #94a3b8; }
+  .log td.ok { color: #22c55e; }
+  .log td.err { color: #ef4444; }
+  .log td.info { color: #38bdf8; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
+  .badge.rr { background: #1e3a5f; color: #60a5fa; }
+  .badge.lc { background: #3b1f3b; color: #c084fc; }
+  .badge.hybrid { background: #1f3b2f; color: #4ade80; }
+  .badge.aware { background: #3b2f1f; color: #fb923c; }
+  .badge.gpu { background: #3b1f2f; color: #f472b6; }
+  .error-banner { background: #450a0a; border: 1px solid #991b1b; color: #fca5a5; padding: 10px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 0.85rem; display: none; }
+  .loading { text-align: center; padding: 60px 0; color: #64748b; font-size: 1rem; }
+  @media (max-width: 768px) { .charts { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+  <h1>System Dashboard</h1>
+
+  <div id="errorBanner" class="error-banner"></div>
+
+  <div class="status-bar" id="statusBar">
+    <div class="status-item"><span class="label">Strategy</span><span class="value" id="sStrategy">—</span></div>
+    <div class="status-item"><span class="label">Workers</span><span class="value" id="sWorkers">0/0</span></div>
+    <div class="status-item"><span class="label">Total Reqs</span><span class="value" id="sTotal">0</span></div>
+    <div class="status-item"><span class="label">Successful</span><span class="value" id="sSuccess">0</span></div>
+    <div class="status-item"><span class="label">Failed</span><span class="value" id="sFailed">0</span></div>
+    <div class="status-item"><span class="label">Error Rate</span><span class="value" id="sErrorRate">0%</span></div>
+    <div class="status-item"><span class="label">Reassigned</span><span class="value" id="sReassigned">0</span></div>
+    <div class="status-item"><span class="label">Pending</span><span class="value" id="sPending">0</span></div>
+    <div class="status-item"><span class="label">Avg Latency</span><span class="value" id="sAvgLat">0ms</span></div>
+  </div>
+
+  <div class="cards" id="workerCards"></div>
+
+  <div class="charts">
+    <div class="chart-box">
+      <h3>Active Connections</h3>
+      <canvas id="connChart"></canvas>
+    </div>
+    <div class="chart-box">
+      <h3>Latency (ms)</h3>
+      <canvas id="latChart"></canvas>
+    </div>
+  </div>
+
+  <div class="log">
+    <h3>Activity Log</h3>
+    <table>
+      <thead><tr><th style="width:80px">Time</th><th style="width:100px">Level</th><th>Message</th></tr></thead>
+      <tbody id="logBody"></tbody>
+    </table>
+  </div>
+
+<script>
+const MAX_LOG = 50;
+const POLL_INTERVAL = 3000;
+
+let connChart = null;
+let latChart = null;
+const logEntries = [];
+
+function strategyBadge(s) {
+  const cls = {round_robin:'rr',least_connections:'lc',hybrid:'hybrid',load_aware:'aware',gpu_aware:'gpu'};
+  return `<span class="badge ${cls[s]||''}">${s.replace(/_/g,' ')}</span>`;
+}
+
+function log(time, level, msg) {
+  logEntries.push({time, level, msg});
+  if (logEntries.length > MAX_LOG) logEntries.shift();
+  const tbody = document.getElementById('logBody');
+  tbody.innerHTML = logEntries.map(e => {
+    const lc = e.level === 'ok' ? 'ok' : e.level === 'err' ? 'err' : 'info';
+    return `<tr><td class="time">${e.time}</td><td class="${lc}">${e.level.toUpperCase()}</td><td>${e.msg}</td></tr>`;
+  }).join('');
+}
+
+function updateStatusBar(data) {
+  const s = data.stats || {};
+  const strategy = data.strategy || '—';
+  const workers = data.workers || [];
+  const healthy = workers.filter(w => w.healthy).length;
+
+  document.getElementById('sStrategy').innerHTML = strategyBadge(strategy);
+  document.getElementById('sWorkers').textContent = `${healthy}/${workers.length}`;
+  document.getElementById('sTotal').textContent = s.total_requests || 0;
+  document.getElementById('sSuccess').textContent = s.successful_requests || 0;
+  document.getElementById('sFailed').textContent = s.failed_requests || 0;
+  document.getElementById('sErrorRate').textContent = (s.error_rate_percent != null ? s.error_rate_percent : 0) + '%';
+  document.getElementById('sReassigned').textContent = s.reassigned_requests || 0;
+  document.getElementById('sPending').textContent = s.pending_requests || 0;
+
+  const lat = s.latency || {};
+  document.getElementById('sAvgLat').textContent = (lat.avg_ms != null ? lat.avg_ms.toFixed(1) : '0') + 'ms';
+}
+
+function renderWorkerCards(data) {
+  const workers = data.workers || [];
+  const lbWorkers = data.lb_workers || [];
+  const lbMap = {};
+  lbWorkers.forEach(w => { lbMap[w.worker_id] = w; });
+
+  const container = document.getElementById('workerCards');
+  container.innerHTML = workers.map(w => {
+    const lbw = lbMap[w.worker_id] || {};
+    const lat = w.avg_latency_ms != null ? w.avg_latency_ms.toFixed(1) : '—';
+    const gpu = lbw.gpu_utilization != null ? lbw.gpu_utilization + '%' : '—';
+    const dot = w.healthy ? 'green' : 'red';
+    return `<div class="card">
+      <div class="top">
+        <span class="name"><span class="dot ${dot}"></span> ${w.worker_id}</span>
+        <span class="conn">${w.active_connections || 0} conn</span>
+      </div>
+      <div class="lat">Latency: ${lat} ms &nbsp; GPU: ${gpu}</div>
+    </div>`;
+  }).join('');
+}
+
+function updateConnChart(data) {
+  const workers = data.workers || [];
+  const labels = workers.map(w => w.worker_id);
+  const values = workers.map(w => w.active_connections || 0);
+  const colors = workers.map(w => w.healthy ? 'rgba(34,197,94,0.7)' : 'rgba(239,68,68,0.7)');
+
+  if (!connChart) {
+    const ctx = document.getElementById('connChart').getContext('2d');
+    connChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Active Connections',
+          data: values,
+          backgroundColor: colors,
+          borderColor: colors.map(c => c.replace('0.7','1')),
+          borderWidth: 1
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { beginAtZero: true, ticks: { stepSize: 1, color: '#94a3b8' }, grid: { color: '#334155' } },
+          x: { ticks: { color: '#94a3b8' }, grid: { display: false } }
+        }
+      }
+    });
+  } else {
+    connChart.data.labels = labels;
+    connChart.data.datasets[0].data = values;
+    connChart.data.datasets[0].backgroundColor = colors;
+    connChart.data.datasets[0].borderColor = colors.map(c => c.replace('0.7','1'));
+    connChart.update('none');
+  }
+}
+
+function updateLatChart(data) {
+  const lat = (data.stats || {}).latency || {};
+  const labels = ['min', 'p50', 'p75', 'p90', 'p95', 'p99', 'max'];
+  const values = [lat.min_ms||0, lat.p50_ms||0, lat.p75_ms||0, lat.p90_ms||0, lat.p95_ms||0, lat.p99_ms||0, lat.max_ms||0];
+
+  if (!latChart) {
+    const ctx = document.getElementById('latChart').getContext('2d');
+    latChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Latency (ms)',
+          data: values,
+          borderColor: '#38bdf8',
+          backgroundColor: 'rgba(56,189,248,0.1)',
+          fill: true,
+          tension: 0.3,
+          pointBackgroundColor: '#38bdf8',
+          pointRadius: 4
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { beginAtZero: true, ticks: { color: '#94a3b8' }, grid: { color: '#334155' } },
+          x: { ticks: { color: '#94a3b8' }, grid: { display: false } }
+        }
+      }
+    });
+  } else {
+    latChart.data.datasets[0].data = values;
+    latChart.update('none');
+  }
+}
+
+function showError(msg) {
+  const banner = document.getElementById('errorBanner');
+  banner.textContent = msg;
+  banner.style.display = 'block';
+}
+
+function hideError() {
+  document.getElementById('errorBanner').style.display = 'none';
+}
+
+async function poll() {
+  try {
+    const resp = await fetch('/api/dashboard');
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    hideError();
+
+    updateStatusBar(data);
+    renderWorkerCards(data);
+    updateConnChart(data);
+    updateLatChart(data);
+
+    const now = new Date().toLocaleTimeString();
+    const s = data.stats || {};
+    if (s.failed_requests > 0) {
+      log(now, 'err', `${s.failed_requests} failed requests | ${s.error_rate_percent}% error rate`);
+    }
+    if (s.reassigned_requests > 0) {
+      log(now, 'info', `${s.reassigned_requests} requests reassigned`);
+    }
+    if (data.strategy) {
+      log(now, 'info', `Strategy: ${data.strategy} | Workers: ${(data.workers||[]).filter(w=>w.healthy).length}/${(data.workers||[]).length} healthy`);
+    }
+  } catch (err) {
+    showError(`Cannot reach dashboard backend — ${err.message}. Make sure the system is running.`);
+  }
+}
+
+poll();
+setInterval(poll, POLL_INTERVAL);
+</script>
+</body>
+</html>

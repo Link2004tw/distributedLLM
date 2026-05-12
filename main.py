@@ -67,9 +67,14 @@ def start_all():
     print("Starting LB Controller...")
     procs.append(start_component("lb-controller", "lb.app", 8005))
 
+    print("Starting Dashboard...")
+    procs.append(start_component("dashboard", "dashboard.app", 8100))
+    time.sleep(1)
+
     print("\nAll components started. System is ready.")
     print("  Entry point:   http://localhost:8000/query")
     print("  Master:        http://localhost:9000/health")
+    print("  Dashboard:     http://localhost:8100")
     print("  Stats:         http://localhost:8000/stats (if LB running on 8000)")
     print("  Press Ctrl+C to stop all components.\n")
 
@@ -129,6 +134,9 @@ def colab():
     print("  Starting Load Balancer...")
     procs.append(start_component("lb", "lb.load_balancer", 8000))
 
+    print("  Starting Dashboard...")
+    procs.append(start_component("dashboard", "dashboard.app", 8100))
+
     print("\n[4/5] Waiting for services to initialize...")
     time.sleep(8)
 
@@ -167,6 +175,7 @@ def colab():
     print("  Query endpoint:  http://localhost:8000/query")
     print("  Stats:           http://localhost:8000/stats")
     print("  Workers:         http://localhost:9000/workers")
+    print("  Dashboard:       http://localhost:8100")
     print("  Press Ctrl+C to stop.\n")
 
     try:
@@ -196,6 +205,7 @@ def main():
         print("  python main.py worker <n>         Start Worker n (1-4)")
         print("  python main.py lb                 Start NGINX")
         print("  python main.py controller         Start LB Controller")
+        print("  python main.py dashboard           Start Dashboard (port 8100)")
         return
 
     cmd = sys.argv[1]
@@ -231,9 +241,12 @@ def main():
     elif cmd == "controller":
         print("Starting LB Controller on port 8005")
         subprocess.run(["uvicorn", "lb.app:app", "--port", "8005"])
+    elif cmd == "dashboard":
+        print("Starting Dashboard on port 8100")
+        subprocess.run(["uvicorn", "dashboard.app:app", "--port", "8100"])
     else:
         print(f"Unknown command: {cmd}")
-        print("Usage: python main.py [start|stop|colab|master|worker|lb|controller]")
+        print("Usage: python main.py [start|stop|colab|master|worker|lb|controller|dashboard]")
 
 
 if __name__ == "__main__":
