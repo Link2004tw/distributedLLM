@@ -29,7 +29,7 @@ time.sleep(3)
 
 ### Cell 2 — Install Python deps + clone
 ```python
-!pip install -q fastapi uvicorn pydantic httpx langchain langchain-ollama langchain-chroma chromadb
+!pip install -q fastapi uvicorn pydantic httpx langchain langchain-ollama langchain-chroma chromadb jinja2
 !git clone <your-repo-url> distributedLLM
 %cd distributedLLM
 ```

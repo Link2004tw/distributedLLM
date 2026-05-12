@@ -320,7 +320,6 @@ Cache hit avoids both ChromaDB retrieval and Ollama inference, reducing latency 
 - Master node with worker registration and heartbeat monitoring
 - RAG pipeline with ChromaDB vector search + nomic-embed-text embeddings
 - Document ingestion script (`ingest.py`) with automatic chunking
-- Admin dashboard with real-time metrics
 
 ### Phase 3: Enhancement & Fault Tolerance
 - Five routing strategies: round_robin, least_connections, load-aware, GPU-aware, hybrid
