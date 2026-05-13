@@ -62,14 +62,16 @@
     <div class="status-item"><span class="label">Reassigned</span><span class="value" id="sReassigned">0</span></div>
     <div class="status-item"><span class="label">Pending</span><span class="value" id="sPending">0</span></div>
     <div class="status-item"><span class="label">Avg Latency</span><span class="value" id="sAvgLat">0ms</span></div>
+    <button id="btnTest" style="margin-left:auto;background:#2563eb;color:#fff;border:none;border-radius:6px;padding:8px 16px;cursor:pointer;font-size:0.85rem;" onclick="sendTestQueries()">Send Test Queries</button>
+    <span id="testStatus" style="font-size:0.8rem;color:#94a3b8;display:none;align-self:center;"></span>
   </div>
 
   <div class="cards" id="workerCards"></div>
 
   <div class="charts">
     <div class="chart-box">
-      <h3>Active Connections</h3>
-      <canvas id="connChart"></canvas>
+      <h3>Per-Worker Throughput</h3>
+      <canvas id="throughputChart"></canvas>
     </div>
     <div class="chart-box">
       <h3>Latency (ms)</h3>
@@ -89,7 +91,7 @@
 const MAX_LOG = 50;
 const POLL_INTERVAL = 3000;
 
-let connChart = null;
+let throughputChart = null;
 let latChart = null;
 const logEntries = [];
 
@@ -130,39 +132,42 @@ function updateStatusBar(data) {
 function renderWorkerCards(data) {
   const workers = data.workers || [];
   const lbWorkers = data.lb_workers || [];
+  const throughput = (data.stats || {}).per_worker_throughput || {};
   const lbMap = {};
   lbWorkers.forEach(w => { lbMap[w.worker_id] = w; });
 
   const container = document.getElementById('workerCards');
   container.innerHTML = workers.map(w => {
     const lbw = lbMap[w.worker_id] || {};
-    const lat = w.avg_latency_ms != null ? w.avg_latency_ms.toFixed(1) : '—';
+    const req = throughput[w.worker_id] || 0;
+    const lat = w.avg_latency_ms > 0 ? w.avg_latency_ms.toFixed(1) : '—';
     const gpu = lbw.gpu_utilization != null ? lbw.gpu_utilization + '%' : '—';
     const dot = w.healthy ? 'green' : 'red';
     return `<div class="card">
       <div class="top">
         <span class="name"><span class="dot ${dot}"></span> ${w.worker_id}</span>
-        <span class="conn">${w.active_connections || 0} conn</span>
+        <span class="conn">${req} req</span>
       </div>
       <div class="lat">Latency: ${lat} ms &nbsp; GPU: ${gpu}</div>
     </div>`;
   }).join('');
 }
 
-function updateConnChart(data) {
+function updateThroughputChart(data) {
+  const throughput = (data.stats || {}).per_worker_throughput || {};
   const workers = data.workers || [];
   const labels = workers.map(w => w.worker_id);
-  const values = workers.map(w => w.active_connections || 0);
+  const values = workers.map(w => throughput[w.worker_id] || 0);
   const colors = workers.map(w => w.healthy ? 'rgba(34,197,94,0.7)' : 'rgba(239,68,68,0.7)');
 
-  if (!connChart) {
-    const ctx = document.getElementById('connChart').getContext('2d');
-    connChart = new Chart(ctx, {
+  if (!throughputChart) {
+    const ctx = document.getElementById('throughputChart').getContext('2d');
+    throughputChart = new Chart(ctx, {
       type: 'bar',
       data: {
         labels,
         datasets: [{
-          label: 'Active Connections',
+          label: 'Requests Handled',
           data: values,
           backgroundColor: colors,
           borderColor: colors.map(c => c.replace('0.7','1')),
@@ -180,11 +185,11 @@ function updateConnChart(data) {
       }
     });
   } else {
-    connChart.data.labels = labels;
-    connChart.data.datasets[0].data = values;
-    connChart.data.datasets[0].backgroundColor = colors;
-    connChart.data.datasets[0].borderColor = colors.map(c => c.replace('0.7','1'));
-    connChart.update('none');
+    throughputChart.data.labels = labels;
+    throughputChart.data.datasets[0].data = values;
+    throughputChart.data.datasets[0].backgroundColor = colors;
+    throughputChart.data.datasets[0].borderColor = colors.map(c => c.replace('0.7','1'));
+    throughputChart.update('none');
   }
 }
 
@@ -236,6 +241,26 @@ function hideError() {
   document.getElementById('errorBanner').style.display = 'none';
 }
 
+async function sendTestQueries() {
+  const btn = document.getElementById('btnTest');
+  const status = document.getElementById('testStatus');
+  btn.disabled = true;
+  btn.style.opacity = '0.6';
+  status.style.display = 'inline';
+  status.textContent = 'Sending...';
+  try {
+    const resp = await fetch('/api/test-queries', { method: 'POST' });
+    const result = await resp.json();
+    status.textContent = `${result.sent} queries sent, ${result.failed} failed`;
+    setTimeout(() => { status.style.display = 'none'; }, 3000);
+  } catch (err) {
+    status.textContent = 'Error: ' + err.message;
+  } finally {
+    btn.disabled = false;
+    btn.style.opacity = '1';
+  }
+}
+
 async function poll() {
   try {
     const resp = await fetch('/api/dashboard');
@@ -245,7 +270,7 @@ async function poll() {
 
     updateStatusBar(data);
     renderWorkerCards(data);
-    updateConnChart(data);
+    updateThroughputChart(data);
     updateLatChart(data);
 
     const now = new Date().toLocaleTimeString();

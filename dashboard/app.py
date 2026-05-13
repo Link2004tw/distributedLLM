@@ -80,6 +80,26 @@ async def dashboard_api():
     }
 
 
+@app.post("/api/test-queries")
+async def send_test_queries():
+    client = await get_client()
+    results = {"sent": 0, "failed": 0}
+    for i in range(10):
+        try:
+            resp = await client.post(
+                f"{LB_URL}/query",
+                json={"query": f"Tell me something interesting about pets. query-{i}", "top_k": 3},
+                timeout=30.0
+            )
+            if resp.status_code == 200:
+                results["sent"] += 1
+            else:
+                results["failed"] += 1
+        except Exception:
+            results["failed"] += 1
+    return results
+
+
 @app.get("/")
 async def index():
     html_path = HERE / "index.html"

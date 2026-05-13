@@ -56,6 +56,7 @@ async def heartbeat_monitor():
                         data = response.json()
                         worker.healthy = data.get("healthy", True)
                         worker.active_connections = data.get("active_connections", 0)
+                        worker.avg_latency_ms = data.get("avg_latency_ms", 0.0)
                         worker.last_heartbeat = time.time()
             except Exception:
                 worker.healthy = False
