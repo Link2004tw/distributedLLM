@@ -1,8 +1,11 @@
 import asyncio
+import logging
 import time
 from typing import Dict, List, Optional, Set
 from fastapi import FastAPI, HTTPException
 import httpx
+
+logger = logging.getLogger(__name__)
 
 from common.models import (
     WorkerInfo,
@@ -59,6 +62,7 @@ async def heartbeat_monitor():
                         worker.avg_latency_ms = data.get("avg_latency_ms", 0.0)
                         worker.last_heartbeat = time.time()
             except Exception:
+                logger.warning("Heartbeat failed for worker %s", worker_id)
                 worker.healthy = False
 
             if not worker.healthy:
@@ -74,7 +78,7 @@ async def notify_load_balancer(worker_id: str):
                 f"{LOAD_BALANCER_URL}/worker/unhealthy", json={"worker_id": worker_id}
             )
     except Exception:
-        pass
+        logger.debug("Failed to notify load balancer of unhealthy worker %s", worker_id)
 
 
 async def notify_load_balancer_worker_added(worker_id: str, host: str, port: int):
@@ -85,7 +89,7 @@ async def notify_load_balancer_worker_added(worker_id: str, host: str, port: int
                 json={"worker_id": worker_id, "host": host, "port": port}
             )
     except Exception:
-        pass
+        logger.debug("Failed to notify load balancer of new worker %s: %s", worker_id)
 
 
 @app.post("/register")

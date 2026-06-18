@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 import uuid
@@ -10,6 +11,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import httpx
+
+logger = logging.getLogger(__name__)
 
 from rag.retriever import Retriever, retriever
 from llm.inference import InferenceEngine, inference_engine
@@ -37,6 +40,8 @@ latencies: List[float] = []
 latencies_lock: Optional[asyncio.Lock] = None
 embed_cache: dict = {}
 response_cache: dict = {}
+embed_cache_lock: Optional[asyncio.Lock] = None
+response_cache_lock: Optional[asyncio.Lock] = None
 
 app = FastAPI()
 
@@ -77,7 +82,7 @@ def get_gpu_info() -> dict:
                 "power_watts": float(parts[4]) if len(parts) > 4 else 0.0
             }
     except Exception:
-        pass
+        logger.debug("Failed to query nvidia-smi GPU info: %s", e)
     return {"gpu_utilization": 0, "memory_used_mb": 0, "memory_total_mb": 6144, "temperature_c": 0, "power_watts": 0.0}
 
 
@@ -92,11 +97,14 @@ def get_embed_key(query: str) -> str:
 
 async def init_services():
     global httpx_client, request_semaphore, active_connections_lock, latencies_lock
+    global embed_cache_lock, response_cache_lock
     limits = httpx.Limits(max_connections=500, max_keepalive_connections=250)
     httpx_client = httpx.AsyncClient(timeout=3600.0, limits=limits)
     request_semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
     active_connections_lock = asyncio.Lock()
     latencies_lock = asyncio.Lock()
+    embed_cache_lock = asyncio.Lock()
+    response_cache_lock = asyncio.Lock()
     await inference_engine.init_client()
 
 
@@ -113,7 +121,7 @@ async def warmup():
         await inference_engine.generate("ping")
         print(f"[{WORKER_ID}] Warmup complete")
     except Exception as e:
-        print(f"[{WORKER_ID}] Warmup failed: {e}")
+        logger.warning("[%s] Warmup failed: %s", WORKER_ID, e)
 
 
 async def retrieve_docs(query: str, top_k: int) -> List[str]:
@@ -129,12 +137,13 @@ async def retrieve_docs(query: str, top_k: int) -> List[str]:
         )
         docs_text = [doc.page_content if hasattr(doc, 'page_content') else str(doc) for doc in docs]
         if docs_text:
-            if len(embed_cache) >= CACHE_SIZE:
-                del embed_cache[next(iter(embed_cache))]
-            embed_cache[embed_key] = docs_text
+            async with embed_cache_lock:
+                if len(embed_cache) >= CACHE_SIZE:
+                    del embed_cache[next(iter(embed_cache))]
+                embed_cache[embed_key] = docs_text
         return docs_text
     except Exception as e:
-        print(f"RAG retrieval error: {e}")
+        logger.warning("RAG retrieval error: %s", e)
         return []
 
 
@@ -163,15 +172,16 @@ async def retrieve_docs_batch(queries: List[str], top_k: int) -> List[List[str]]
             None, lambda: retriever.retrieve_batch(queries_to_fetch, top_k=top_k)
         )
     except Exception as e:
-        print(f"Batch retrieval error: {e}")
+        logger.warning("Batch retrieval error: %s", e)
         fresh_results = [[] for _ in queries_to_fetch]
 
     for idx, query, docs in zip(indices_to_fetch, queries_to_fetch, fresh_results):
         embed_key = get_embed_key(query)
         if docs:
-            if len(embed_cache) >= CACHE_SIZE:
-                del embed_cache[next(iter(embed_cache))]
-            embed_cache[embed_key] = docs
+            async with embed_cache_lock:
+                if len(embed_cache) >= CACHE_SIZE:
+                    del embed_cache[next(iter(embed_cache))]
+                embed_cache[embed_key] = docs
 
     results = [[] for _ in queries]
     for idx, cached in cached_results:
@@ -204,7 +214,7 @@ async def process_single_query(query: str, top_k: int, user_id: str) -> dict:
             try:
                 answer = await inference_engine.generate_with_context(query, docs)
             except Exception as e:
-                print(f"LLM inference error: {e}")
+                logger.warning("LLM inference error: %s", e)
                 return {
                     "worker_id": WORKER_ID,
                     "answer": "Service temporarily unavailable. Please retry.",
@@ -226,9 +236,10 @@ async def process_single_query(query: str, top_k: int, user_id: str) -> dict:
         }
 
         if docs:
-            if len(response_cache) >= CACHE_SIZE:
-                del response_cache[next(iter(response_cache))]
-            response_cache[cache_key] = result.copy()
+            async with response_cache_lock:
+                if len(response_cache) >= CACHE_SIZE:
+                    del response_cache[next(iter(response_cache))]
+                response_cache[cache_key] = result.copy()
 
         return result
 
@@ -277,7 +288,7 @@ async def process_batch_single(query: str, docs: List[str], top_k: int, batch_st
         try:
             answer = await inference_engine.generate_with_context(query, docs)
         except Exception as e:
-            print(f"LLM inference error in batch: {e}")
+            logger.warning("LLM inference error in batch: %s", e)
             answer = "Service temporarily unavailable. Please retry."
 
     result = {
@@ -289,9 +300,10 @@ async def process_batch_single(query: str, docs: List[str], top_k: int, batch_st
     }
 
     if docs and answer != "Service temporarily unavailable. Please retry.":
-        if len(response_cache) >= CACHE_SIZE:
-            del response_cache[next(iter(response_cache))]
-        response_cache[cache_key] = result.copy()
+        async with response_cache_lock:
+            if len(response_cache) >= CACHE_SIZE:
+                del response_cache[next(iter(response_cache))]
+            response_cache[cache_key] = result.copy()
 
     return result
 
@@ -333,7 +345,7 @@ async def process_batch_optimized(queries: List[QueryRequest]) -> List[dict]:
         try:
             answers = await inference_engine.generate_batch(miss_queries, miss_docs)
         except Exception as e:
-            print(f"Batch generation error: {e}")
+            logger.warning("Batch generation error: %s", e)
             answers = ["Service temporarily unavailable. Please retry." for _ in miss_queries]
 
         for (idx, query, docs, tk), answer in zip(cache_misses, answers):
@@ -345,9 +357,10 @@ async def process_batch_optimized(queries: List[QueryRequest]) -> List[dict]:
                 "cache_hit": False,
             }
             if docs and answer != "Service temporarily unavailable. Please retry.":
-                if len(response_cache) >= CACHE_SIZE:
-                    del response_cache[next(iter(response_cache))]
-                response_cache[get_cache_key(query, tk)] = result.copy()
+                async with response_cache_lock:
+                    if len(response_cache) >= CACHE_SIZE:
+                        del response_cache[next(iter(response_cache))]
+                    response_cache[get_cache_key(query, tk)] = result.copy()
             results[idx] = result
 
     return results
@@ -363,7 +376,7 @@ async def startup_event():
             json={"worker_id": WORKER_ID, "port": WORKER_PORT},
         )
     except Exception:
-        pass
+        logger.warning("Failed to register worker %s with master at %s", WORKER_ID)
 
 
 @app.on_event("shutdown")

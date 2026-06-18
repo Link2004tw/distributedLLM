@@ -1,3 +1,4 @@
+import logging
 import os
 import asyncio
 import time
@@ -10,6 +11,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="GPU Load Balancer")
 
@@ -102,7 +105,7 @@ def save_pending_requests():
         with open(PERSISTENCE_FILE, "w") as f:
             json.dump(data, f)
     except Exception as e:
-        print(f"Failed to save pending requests: {e}")
+        logger.warning("Failed to save pending requests: %s", e)
 
 
 def load_pending_requests():
@@ -125,9 +128,9 @@ def load_pending_requests():
 
         if requests:
             pending_requests = requests
-            print(f"Loaded {len(requests)} pending requests from disk")
+            logger.info("Loaded %d pending requests from disk", len(requests))
     except Exception as e:
-        print(f"Failed to load pending requests: {e}")
+        logger.warning("Failed to load pending requests: %s", e)
 
 
 def clear_persistent_requests():
@@ -135,7 +138,7 @@ def clear_persistent_requests():
         if PERSISTENCE_FILE.exists():
             PERSISTENCE_FILE.unlink()
     except Exception:
-        pass
+        logger.debug("Failed to clear persistent requests file")
 
 
 class QueryRequest(BaseModel):
@@ -174,6 +177,7 @@ async def check_worker_health(worker: WorkerState) -> bool:
             worker.consecutive_failures = 0
             return True
     except Exception:
+        logger.debug("Health check failed for worker %s: %s", worker.worker_id)
         worker.consecutive_failures += 1
     return False
 
@@ -214,7 +218,7 @@ async def select_from_master(exclude: Set[str] = None) -> Optional[WorkerState]:
                 _schedule_cache = data
                 _schedule_cache_time = now
         except Exception:
-            pass
+            logger.debug("Failed to query master scheduler")
 
     if _schedule_cache:
         wid = _schedule_cache.get("worker_id")
@@ -330,7 +334,7 @@ async def reassign_pending_requests():
                 routing_state.reassigned_requests += 1
                 continue
         except Exception:
-            pass
+            logger.debug("Reassignment request failed for %s: %s", req.query[:50])
         req.attempts += 1
         req.failed_workers.add(worker.worker_id)
         if req.attempts < MAX_REASSIGN_ATTEMPTS:
@@ -381,7 +385,7 @@ async def forward_to_worker(worker: WorkerState, query: str, top_k: int, exclude
             try:
                 return await forward_to_worker(alt_worker, query, top_k, exclude_set)
             except Exception:
-                pass
+                logger.debug("Fallback worker call failed for query: %s", query[:50])
 
     pending_requests.append(FailedRequest(query=query, top_k=top_k, attempts=1, failed_workers=exclude_set))
     save_pending_requests()
